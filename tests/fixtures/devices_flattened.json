@@ -1,0 +1,8 @@
+{
+  "device-uri:0": "ipp://Office._ipp._tcp.local/",
+  "device-info:0": "Office Printer",
+  "device-id:0": "MFG:Acme;MDL:Laser 2000;SN:ABC123;CMD:PDF,PWG;",
+  "device-uri:1": "socket://192.0.2.5",
+  "device-info:1": "Warehouse Printer",
+  "device-id:1": "MFG:Acme;MDL:LabelPro;"
+}

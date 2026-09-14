@@ -1,0 +1,8 @@
+{
+  "setup.printers": {
+    "icon": "󰐪",
+    "label": "Printers",
+    "description": "Add and manage printers",
+    "action": "omarchy-shell shell summon segersb.omarchy-printers '{}'"
+  }
+}

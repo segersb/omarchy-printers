@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "segersb.omarchy-printers",
+  "name": "Printers",
+  "version": "0.1.0",
+  "author": "Ben Segers",
+  "description": "Discover, add, and manage local CUPS printers",
+  "kinds": [
+    "panel"
+  ],
+  "entryPoints": {
+    "panel": "PrinterPanel.qml"
+  }
+}
