@@ -107,9 +107,13 @@ function mergeAvailable(current, cached, queues) {
 function quickOptions(options) {
   var preferred = [
     "pagesize", "media",
+    "mediatype",
+    "inputslot", "mediasource",
     "duplex", "sides",
     "colormodel", "print-color-mode",
-    "resolution", "print-quality"
+    "resolution", "print-quality", "cupsprintquality",
+    "pageregion",
+    "outputbin"
   ]
   var ranked = []
   ;(options || []).forEach(function(option, sourceIndex) {
@@ -130,6 +134,87 @@ function quickOptions(options) {
   return ranked.map(function(item) { return item.option })
 }
 
+function humanizeIdentifier(value) {
+  var text = String(value || "")
+    .replace(/^cups(?=[A-Z])/, "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .trim()
+  if (!text) return ""
+  return text.charAt(0).toUpperCase() + text.slice(1)
+}
+
+function optionLabel(option) {
+  var name = String(option && option.name || "")
+  var labels = {
+    PageSize: "Media size",
+    MediaType: "Media type",
+    InputSlot: "Media source",
+    MediaSource: "Media source",
+    Duplex: "Two-sided printing",
+    ColorModel: "Color mode",
+    OutputMode: "Color mode",
+    cupsPrintQuality: "Print quality",
+    PageRegion: "Printable area",
+    OutputBin: "Output tray"
+  }
+  return labels[name] || humanizeIdentifier(option && option.label || name)
+}
+
+function optionChoiceLabel(optionName, choice) {
+  var value = String(choice && typeof choice === "object" ? choice.value : choice)
+  var label = String(choice && typeof choice === "object" ? choice.label : choice)
+  var key = String(optionName || "") + ":" + value
+  var labels = {
+    "Duplex:None": "Off",
+    "Duplex:DuplexNoTumble": "Long edge",
+    "Duplex:DuplexTumble": "Short edge",
+    "OutputMode:Gray": "Grayscale",
+    "ColorModel:Gray": "Grayscale",
+    "InputSlot:Auto": "Automatic",
+    "MediaSource:Auto": "Automatic",
+    "OutputBin:FaceDown": "Face down",
+    "OutputBin:FaceUp": "Face up"
+  }
+  if (labels[key]) return labels[key]
+  if (label === value && /[_-]|[a-z][A-Z]/.test(label))
+    return humanizeIdentifier(label)
+  return label
+}
+
+function optionChoices(option) {
+  return (option && option.choices || []).map(function(choice) {
+    var value = String(choice && typeof choice === "object" ? choice.value : choice)
+    return {
+      value: value,
+      label: optionChoiceLabel(option && option.name, choice)
+    }
+  })
+}
+
+function optionsDirty(options, values) {
+  return (options || []).some(function(option) {
+    return String(values && values[option.name] !== undefined ? values[option.name] : "")
+      !== String(option.default === undefined ? "" : option.default)
+  })
+}
+
+function printerSummary(queues) {
+  var items = queues || []
+  if (items.length === 0) return "No printers added"
+  var problems = items.filter(function(queue) {
+    return !queue.enabled || queue.online === false
+  }).length
+  var noun = items.length === 1 ? "printer" : "printers"
+  if (problems > 0)
+    return items.length + " " + noun + " · " + problems
+      + (problems === 1 ? " needs attention" : " need attention")
+  var unknown = items.some(function(queue) {
+    return queue.online === null || queue.online === undefined
+  })
+  return items.length + " " + noun + " · " + (unknown ? "Status unavailable" : "Online")
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     clamp: clamp,
@@ -141,6 +226,11 @@ if (typeof module !== "undefined") {
     queueStatus: queueStatus,
     applyPresenceGrace: applyPresenceGrace,
     mergeAvailable: mergeAvailable,
-    quickOptions: quickOptions
+    quickOptions: quickOptions,
+    humanizeIdentifier: humanizeIdentifier,
+    optionLabel: optionLabel,
+    optionChoices: optionChoices,
+    optionsDirty: optionsDirty,
+    printerSummary: printerSummary
   }
 }

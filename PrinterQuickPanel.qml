@@ -18,6 +18,7 @@ Panel {
   property int selectedQueueIndex: -1
   property var options: []
   property var optionValues: ({})
+  property var submittedOptionValues: ({})
   property var optionCache: ({})
   property string activeCommand: ""
   property string activeQueueName: ""
@@ -32,16 +33,12 @@ Panel {
   readonly property var selectedQueue: selectedQueueIndex >= 0
     && selectedQueueIndex < snapshot.queues.length
       ? snapshot.queues[selectedQueueIndex] : null
-  readonly property var summaryQueue: {
-    if (selectedQueue) return selectedQueue
-    for (var i = 0; i < snapshot.queues.length; i++)
-      if (snapshot.queues[i].isDefault) return snapshot.queues[i]
-    return snapshot.queues.length > 0 ? snapshot.queues[0] : null
-  }
   readonly property var displayOptions: PrinterState.quickOptions(options)
+  readonly property bool defaultsDirty: PrinterState.optionsDirty(displayOptions, optionValues)
+  readonly property bool saveActionEnabled: defaultsDirty && !busy
   readonly property int targetCount: snapshot.queues.length
     + displayOptions.length
-    + (displayOptions.length > 0 ? 1 : 0)
+    + (saveActionEnabled ? 1 : 0)
     + 1
   readonly property int optionOffset: snapshot.queues.length
   readonly property int saveIndex: optionOffset + displayOptions.length
@@ -50,6 +47,10 @@ Panel {
   readonly property bool hasProblem: snapshot.queues.some(function(queue) {
     return !queue.enabled || queue.online === false
   })
+  readonly property bool allHealthy: snapshot.queues.length > 0
+    && snapshot.queues.every(function(queue) {
+      return queue.enabled && queue.online === true
+    })
   readonly property string icon: "󰐪"
 
   readonly property string pluginDir: {
@@ -139,12 +140,14 @@ Panel {
   }
 
   function saveOptions() {
-    if (!selectedQueue || displayOptions.length === 0) return
+    if (!selectedQueue || displayOptions.length === 0 || !defaultsDirty) return
     var values = {}
     for (var i = 0; i < displayOptions.length; i++) {
       var option = displayOptions[i]
       values[option.name] = optionValues[option.name]
     }
+    submittedOptionValues = Object.assign({}, values)
+    cursorActive = false
     runBackend("set-options", [
       "--queue", selectedQueue.name,
       "--options", JSON.stringify(values)
@@ -171,11 +174,12 @@ Panel {
   function targetItem(index) {
     if (index < snapshot.queues.length) return queueRepeater.itemAt(index)
     if (index < saveIndex) return optionRepeater.itemAt(index - optionOffset)
-    if (displayOptions.length > 0 && index === saveIndex) return saveRow
+    if (saveActionEnabled && index === saveIndex) return saveRow
     return settingsRow
   }
 
   function ensureCursorVisible() {
+    if (cursorIndex === settingsIndex) return
     var item = targetItem(cursorIndex)
     if (!item || viewport.height <= 0) return
     var point = item.mapToItem(content, 0, 0)
@@ -203,7 +207,7 @@ Panel {
       if (optionItem) optionItem.toggle()
       return
     }
-    if (displayOptions.length > 0 && activeIndex === saveIndex) {
+    if (saveActionEnabled && activeIndex === saveIndex) {
       saveOptions()
       return
     }
@@ -263,9 +267,10 @@ Panel {
     if (command === "set-options") {
       var updatedOptions = options.map(function(option) {
         var updated = Object.assign({}, option)
-        updated.default = optionValues[option.name]
+        updated.default = submittedOptionValues[option.name]
         return updated
       })
+      optionValues = Object.assign({}, submittedOptionValues)
       options = updatedOptions
       if (selectedQueue) cacheOptions(selectedQueue.name, updatedOptions)
       statusKind = "success"
@@ -315,7 +320,14 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(400))
-    contentHeight: panel.fittedContentHeight(content.implicitHeight)
+    contentHeight: panel.fittedContentHeight(
+      header.implicitHeight
+        + headerSeparator.implicitHeight
+        + content.implicitHeight
+        + footerSeparator.implicitHeight
+        + settingsRow.height
+        + Style.space(56)
+    )
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -331,9 +343,88 @@ Panel {
         if (text === "r" || text === "R") root.refresh()
       }
 
+      Item {
+        id: header
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        implicitHeight: Math.max(heroIcon.implicitHeight, heroLabels.implicitHeight, refreshButton.implicitHeight)
+        height: implicitHeight
+
+        Text {
+          id: heroIcon
+          anchors.left: parent.left
+          anchors.verticalCenter: parent.verticalCenter
+          text: root.icon
+          color: root.bar.foreground
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.display
+        }
+
+        Column {
+          id: heroLabels
+          anchors.left: heroIcon.right
+          anchors.leftMargin: Style.space(14)
+          anchors.right: refreshButton.left
+          anchors.rightMargin: Style.space(12)
+          anchors.verticalCenter: parent.verticalCenter
+          spacing: Style.space(2)
+
+          Text {
+            width: parent.width
+            text: "Printers"
+            color: root.bar.foreground
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.title
+            font.bold: true
+            elide: Text.ElideRight
+          }
+
+          Text {
+            width: parent.width
+            text: root.busy && root.snapshot.queues.length === 0
+              ? "CHECKING PRINTERS"
+              : PrinterState.printerSummary(root.snapshot.queues).toUpperCase()
+            color: root.allHealthy
+              ? Color.flatColor("green", root.bar.foreground)
+              : Color.muted
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+            font.letterSpacing: 1.2
+            elide: Text.ElideRight
+          }
+        }
+
+        PanelActionButton {
+          id: refreshButton
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          iconText: "󰑐"
+          tooltipText: "Refresh"
+          foreground: root.bar.foreground
+          enabled: !root.busy
+          onClicked: root.refresh()
+        }
+      }
+
+      PanelSeparator {
+        id: headerSeparator
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: header.bottom
+        anchors.topMargin: Style.space(14)
+        foreground: root.bar.foreground
+      }
+
       Flickable {
         id: viewport
-        anchors.fill: parent
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: headerSeparator.bottom
+        anchors.bottom: footerSeparator.top
+        anchors.topMargin: Style.space(14)
+        anchors.bottomMargin: Style.space(14)
         contentWidth: width
         contentHeight: content.implicitHeight
         clip: true
@@ -346,71 +437,6 @@ Panel {
           id: content
           width: viewport.width
           spacing: Style.space(14)
-
-          Item {
-            width: parent.width
-            implicitHeight: Math.max(heroIcon.implicitHeight, heroLabels.implicitHeight, refreshButton.implicitHeight)
-
-            Text {
-              id: heroIcon
-              anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
-              text: root.icon
-              color: root.bar.foreground
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.display
-            }
-
-            Column {
-              id: heroLabels
-              anchors.left: heroIcon.right
-              anchors.leftMargin: Style.space(14)
-              anchors.right: refreshButton.left
-              anchors.rightMargin: Style.space(12)
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.space(2)
-
-              Text {
-                width: parent.width
-                text: root.summaryQueue ? root.summaryQueue.name : "Printers"
-                color: root.bar.foreground
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.title
-                font.bold: true
-                elide: Text.ElideRight
-              }
-
-              Text {
-                width: parent.width
-                text: root.summaryQueue
-                  ? PrinterState.queueStatus(root.summaryQueue).toUpperCase()
-                  : (root.busy ? "CHECKING PRINTERS" : "NO PRINTERS ADDED")
-                color: root.summaryQueue && root.summaryQueue.online
-                  ? Color.flatColor("green", root.bar.foreground)
-                  : Color.muted
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.caption
-                font.bold: true
-                font.letterSpacing: 1.2
-                elide: Text.ElideRight
-              }
-            }
-
-            PanelActionButton {
-              id: refreshButton
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              iconText: "󰑐"
-              tooltipText: "Refresh"
-              foreground: root.bar.foreground
-              enabled: !root.busy
-              onClicked: root.refresh()
-            }
-          }
-
-          PanelSeparator {
-            foreground: root.bar.foreground
-          }
 
           Column {
             width: parent.width
@@ -434,7 +460,6 @@ Panel {
                 height: Style.space(54)
                 bordered: true
                 hasCursor: root.cursorActive && root.cursorIndex === index
-                current: root.selectedQueueIndex === index
 
                 Row {
                   anchors.left: parent.left
@@ -527,26 +552,54 @@ Panel {
               id: optionRepeater
               model: root.displayOptions
 
-              Dropdown {
+              Item {
+                id: optionRow
                 required property var modelData
                 required property int index
+                readonly property bool popupOpen: optionDropdown.popupOpen
+
                 width: parent.width
-                label: modelData.label
-                value: String(root.optionValues[modelData.name] || "")
-                options: modelData.choices || []
-                foreground: root.bar.foreground
-                hasCursor: root.cursorActive && root.cursorIndex === root.optionOffset + index
-                onHovered: function(on) {
-                  if (on) {
-                    root.cursorActive = true
-                    root.cursorIndex = root.optionOffset + index
-                  }
+                height: optionDropdown.implicitHeight
+                opacity: root.busy ? 0.6 : 1
+
+                function close() { optionDropdown.close() }
+                function toggle() { optionDropdown.toggle() }
+
+                Text {
+                  anchors.left: parent.left
+                  anchors.right: optionDropdown.left
+                  anchors.rightMargin: Style.space(12)
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: PrinterState.optionLabel(optionRow.modelData)
+                  color: root.bar.foreground
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  elide: Text.ElideRight
                 }
-                onPopupOpenChanged: root.controlPopupOpen = popupOpen
-                onChanged: function(value) {
-                  var next = Object.assign({}, root.optionValues)
-                  next[modelData.name] = value
-                  root.optionValues = next
+
+                Dropdown {
+                  id: optionDropdown
+                  width: parent.width * 0.62
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  showLabel: false
+                  enabled: !root.busy
+                  value: String(root.optionValues[optionRow.modelData.name] || "")
+                  options: PrinterState.optionChoices(optionRow.modelData)
+                  foreground: root.bar.foreground
+                  hasCursor: root.cursorActive && root.cursorIndex === root.optionOffset + optionRow.index
+                  onHovered: function(on) {
+                    if (on) {
+                      root.cursorActive = true
+                      root.cursorIndex = root.optionOffset + optionRow.index
+                    }
+                  }
+                  onPopupOpenChanged: root.controlPopupOpen = popupOpen
+                  onChanged: function(value) {
+                    var next = Object.assign({}, root.optionValues)
+                    next[optionRow.modelData.name] = value
+                    root.optionValues = next
+                  }
                 }
               }
             }
@@ -556,12 +609,14 @@ Panel {
               width: parent.width
               height: Style.spacing.controlHeight
               bordered: true
-              hasCursor: root.cursorActive && root.cursorIndex === root.saveIndex
+              hasCursor: root.saveActionEnabled
+                && root.cursorActive && root.cursorIndex === root.saveIndex
+              opacity: root.defaultsDirty || (root.busy && root.activeCommand === "set-options") ? 1 : 0.5
 
               Text {
                 anchors.centerIn: parent
                 text: root.busy && root.activeCommand === "set-options"
-                  ? "Saving…" : "Save defaults"
+                  ? "Saving…" : "Save printer defaults"
                 color: root.bar.foreground
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.body
@@ -570,8 +625,8 @@ Panel {
               MouseArea {
                 anchors.fill: parent
                 hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                enabled: !root.busy
+                cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                enabled: root.saveActionEnabled
                 onPositionChanged: function(mouse) { root.setPointerCursor(root.saveIndex, saveRow, mouse) }
                 onClicked: root.saveOptions()
               }
@@ -613,44 +668,52 @@ Panel {
             wrapMode: Text.WordWrap
           }
 
-          PanelSeparator {
-            foreground: root.bar.foreground
+        }
+      }
+
+      PanelSeparator {
+        id: footerSeparator
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: settingsRow.top
+        anchors.bottomMargin: Style.space(14)
+        foreground: root.bar.foreground
+      }
+
+      CursorSurface {
+        id: settingsRow
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: Style.spacing.controlHeight
+        hasCursor: root.cursorActive && root.cursorIndex === root.settingsIndex
+
+        Text {
+          anchors.left: parent.left
+          anchors.verticalCenter: parent.verticalCenter
+          text: "Open printer settings"
+          color: root.bar.foreground
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.body
+        }
+
+        Text {
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          text: "󰅂"
+          color: root.bar.foreground
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.icon
+        }
+
+        MouseArea {
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onPositionChanged: function(mouse) {
+            root.setPointerCursor(root.settingsIndex, settingsRow, mouse)
           }
-
-          CursorSurface {
-            id: settingsRow
-            width: parent.width
-            height: Style.spacing.controlHeight
-            hasCursor: root.cursorActive && root.cursorIndex === root.settingsIndex
-
-            Text {
-              anchors.left: parent.left
-              anchors.verticalCenter: parent.verticalCenter
-              text: "Open printer settings"
-              color: root.bar.foreground
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.body
-            }
-
-            Text {
-              anchors.right: parent.right
-              anchors.verticalCenter: parent.verticalCenter
-              text: "󰅂"
-              color: root.bar.foreground
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.icon
-            }
-
-            MouseArea {
-              anchors.fill: parent
-              hoverEnabled: true
-              cursorShape: Qt.PointingHandCursor
-              onPositionChanged: function(mouse) {
-                root.setPointerCursor(root.settingsIndex, settingsRow, mouse)
-              }
-              onClicked: root.openSettings()
-            }
-          }
+          onClicked: root.openSettings()
         }
       }
     }

@@ -113,8 +113,36 @@ assert.deepEqual(state.quickOptions([
   { name: "ColorModel" },
   { name: "OutputMode" }
 ]).map(item => item.name), [
-  "PageSize", "Duplex", "ColorModel", "Resolution", "InputSlot", "OutputMode"
+  "PageSize", "InputSlot", "Duplex", "ColorModel", "Resolution", "OutputMode"
 ])
+
+assert.equal(state.optionLabel({ name: "cupsPrintQuality", label: "cupsPrintQuality" }), "Print quality")
+assert.equal(state.optionLabel({ name: "PageRegion", label: "PageRegion" }), "Printable area")
+assert.deepEqual(state.optionChoices({
+  name: "Duplex",
+  choices: [
+    { value: "None", label: "None" },
+    { value: "DuplexNoTumble", label: "DuplexNoTumble" }
+  ]
+}), [
+  { value: "None", label: "Off" },
+  { value: "DuplexNoTumble", label: "Long edge" }
+])
+assert.equal(state.optionsDirty(
+  [{ name: "Duplex", default: "None" }],
+  { Duplex: "None" }
+), false)
+assert.equal(state.optionsDirty(
+  [{ name: "Duplex", default: "None" }],
+  { Duplex: "DuplexNoTumble" }
+), true)
+assert.equal(state.printerSummary([
+  { enabled: true, online: true }
+]), "1 printer · Online")
+assert.equal(state.printerSummary([
+  { enabled: true, online: true },
+  { enabled: false, online: true }
+]), "2 printers · 1 needs attention")
 
 assert.deepEqual(state.mergeAvailable(
   [],
