@@ -13,12 +13,17 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(manifest["schemaVersion"], 1)
         self.assertEqual(manifest["id"], "segersb.omarchy-printers")
         self.assertIn("panel", manifest["kinds"])
+        self.assertIn("bar-widget", manifest["kinds"])
         self.assertEqual(manifest["entryPoints"]["panel"], "PrinterPanel.qml")
+        self.assertEqual(
+            manifest["entryPoints"]["barWidget"], "PrinterQuickPanel.qml"
+        )
 
-    def test_entry_point_exists(self):
+    def test_entry_points_exist(self):
         manifest = json.loads((ROOT / "manifest.json").read_text())
 
-        self.assertTrue((ROOT / manifest["entryPoints"]["panel"]).is_file())
+        for entry_point in manifest["entryPoints"].values():
+            self.assertTrue((ROOT / entry_point).is_file())
 
     def test_menu_snippet_targets_plugin(self):
         menu = json.loads((ROOT / "docs" / "omarchy-menu.jsonc").read_text())

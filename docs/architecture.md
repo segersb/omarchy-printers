@@ -12,6 +12,18 @@ stderr, where Quickshell records them in its log. User-facing errors use stable
 error codes and short messages rather than raw CUPS, D-Bus, or subprocess
 output.
 
+## Shell surfaces
+
+`PrinterQuickPanel.qml` is a `bar-widget` built on Omarchy's shared `Panel` and
+`KeyboardPanel` components. It shows installed-printer presence and a small
+set of common defaults, then links to the summoned `PrinterPanel.qml` for full
+administration. The quick popup deliberately excludes add/remove, pause,
+legacy discovery, and test-page actions.
+
+Opening either surface and refreshing use the unprivileged snapshot path.
+Changing defaults is an explicit mutation and may invoke PolicyKit only after
+the user chooses **Save defaults**.
+
 ## Read path
 
 - pycups reads installed queues, printer attributes, jobs, defaults, and local

@@ -105,6 +105,15 @@ assert.deepEqual(state.mergeAvailable(
   [{ identity: "legacy" }]
 ), [])
 
+assert.deepEqual(state.quickOptions([
+  { name: "InputSlot" },
+  { name: "Resolution" },
+  { name: "Duplex" },
+  { name: "PageSize" },
+  { name: "ColorModel" },
+  { name: "OutputMode" }
+]).map(item => item.name), ["PageSize", "Duplex", "ColorModel", "Resolution"])
+
 assert.deepEqual(state.mergeAvailable(
   [],
   [{ identity: "uri:socket://printer:9100", normalizedUri: "socket://printer:9100" }],

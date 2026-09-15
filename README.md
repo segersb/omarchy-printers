@@ -1,7 +1,8 @@
 # Omarchy Printers
 
-A keyboard-first Omarchy Shell panel for discovering, adding, and managing
-local CUPS printers.
+A keyboard-first Omarchy Shell printer widget. Its compact bar popup follows
+the built-in Wi-Fi visual language for status and common defaults; **Open
+printer settings** opens the full management panel.
 
 ![Installed printer view](docs/screenshots/installed.png)
 
@@ -52,6 +53,11 @@ omarchy plugin enable segersb.omarchy-printers
 
 ## Open
 
+Enabling the plugin adds its printer icon to the right side of the bar. Click
+it for printer status and common defaults.
+
+The full settings panel can also be opened directly:
+
 ```bash
 omarchy-shell shell summon segersb.omarchy-printers '{}'
 ```
@@ -75,12 +81,25 @@ omarchy plugin remove segersb.omarchy-printers
 
 ## Keyboard controls
 
+Quick popup:
+
+- `j` / `k` or arrows: move through printers and defaults
+- `Enter` or Space: activate
+- `r`: refresh
+- `Esc`: close
+
+Full settings:
+
 - `j` / `k` or arrows: move
 - `Enter` or Space: activate
 - `r`: refresh the printer list
 - `f`: find additional legacy printers (may request administrator approval)
 - `Esc`: go back or close
 - Tab: move through form controls
+
+The compact popup intentionally omits administrative actions such as adding,
+removing, pausing, and printing a test page. Use **Open printer settings** for
+the full panel.
 
 ## Development
 

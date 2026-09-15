@@ -6,9 +6,18 @@
   "author": "Ben Segers",
   "description": "Discover, add, and manage local CUPS printers",
   "kinds": [
-    "panel"
+    "panel",
+    "bar-widget"
   ],
   "entryPoints": {
-    "panel": "PrinterPanel.qml"
+    "panel": "PrinterPanel.qml",
+    "barWidget": "PrinterQuickPanel.qml"
+  },
+  "barWidget": {
+    "displayName": "Printers",
+    "description": "Printer status and quick defaults",
+    "category": "System",
+    "defaultSection": "right",
+    "allowMultiple": false
   }
 }

@@ -104,6 +104,33 @@ function mergeAvailable(current, cached, queues) {
   return result
 }
 
+function quickOptions(options) {
+  var preferred = [
+    "pagesize", "media",
+    "duplex", "sides",
+    "colormodel", "print-color-mode",
+    "resolution", "print-quality"
+  ]
+  var ranked = []
+  ;(options || []).forEach(function(option, sourceIndex) {
+    var name = String(option.name || "").toLowerCase()
+    var rank = preferred.length
+    for (var i = 0; i < preferred.length; i++) {
+      if (name === preferred[i] || name.indexOf(preferred[i]) !== -1) {
+        rank = i
+        break
+      }
+    }
+    if (rank < preferred.length)
+      ranked.push({ rank: rank, sourceIndex: sourceIndex, option: option })
+  })
+  ranked.sort(function(left, right) {
+    if (left.rank !== right.rank) return left.rank - right.rank
+    return left.sourceIndex - right.sourceIndex
+  })
+  return ranked.slice(0, 4).map(function(item) { return item.option })
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     clamp: clamp,
@@ -114,6 +141,7 @@ if (typeof module !== "undefined") {
     preserveCursor: preserveCursor,
     queueStatus: queueStatus,
     applyPresenceGrace: applyPresenceGrace,
-    mergeAvailable: mergeAvailable
+    mergeAvailable: mergeAvailable,
+    quickOptions: quickOptions
   }
 }
