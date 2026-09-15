@@ -112,7 +112,9 @@ assert.deepEqual(state.quickOptions([
   { name: "PageSize" },
   { name: "ColorModel" },
   { name: "OutputMode" }
-]).map(item => item.name), ["PageSize", "Duplex", "ColorModel", "Resolution"])
+]).map(item => item.name), [
+  "PageSize", "Duplex", "ColorModel", "Resolution", "InputSlot", "OutputMode"
+])
 
 assert.deepEqual(state.mergeAvailable(
   [],

@@ -15,8 +15,8 @@ output.
 ## Shell surfaces
 
 `PrinterQuickPanel.qml` is a `bar-widget` built on Omarchy's shared `Panel` and
-`KeyboardPanel` components. It shows installed-printer presence and a small
-set of common defaults, then links to the summoned `PrinterPanel.qml` for full
+`KeyboardPanel` components. It shows installed-printer presence and all
+defaults exposed by the local queue, then links to `PrinterPanel.qml` for full
 administration. The quick popup deliberately excludes add/remove, pause,
 legacy discovery, and test-page actions.
 

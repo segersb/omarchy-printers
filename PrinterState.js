@@ -121,14 +121,13 @@ function quickOptions(options) {
         break
       }
     }
-    if (rank < preferred.length)
-      ranked.push({ rank: rank, sourceIndex: sourceIndex, option: option })
+    ranked.push({ rank: rank, sourceIndex: sourceIndex, option: option })
   })
   ranked.sort(function(left, right) {
     if (left.rank !== right.rank) return left.rank - right.rank
     return left.sourceIndex - right.sourceIndex
   })
-  return ranked.slice(0, 4).map(function(item) { return item.option })
+  return ranked.map(function(item) { return item.option })
 }
 
 if (typeof module !== "undefined") {

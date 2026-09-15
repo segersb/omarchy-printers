@@ -18,24 +18,27 @@ Panel {
   property int selectedQueueIndex: -1
   property var options: []
   property var optionValues: ({})
+  property var optionCache: ({})
   property string activeCommand: ""
+  property string activeQueueName: ""
   property string statusMessage: ""
   property string statusKind: ""
   property bool backendTimedOut: false
   property bool controlPopupOpen: false
   property bool cursorActive: false
   property int cursorIndex: 0
+  property int pendingOptionsQueueIndex: -1
 
   readonly property var selectedQueue: selectedQueueIndex >= 0
     && selectedQueueIndex < snapshot.queues.length
       ? snapshot.queues[selectedQueueIndex] : null
-  readonly property var commonOptions: PrinterState.quickOptions(options)
+  readonly property var displayOptions: PrinterState.quickOptions(options)
   readonly property int targetCount: snapshot.queues.length
-    + commonOptions.length
-    + (commonOptions.length > 0 ? 1 : 0)
+    + displayOptions.length
+    + (displayOptions.length > 0 ? 1 : 0)
     + 1
   readonly property int optionOffset: snapshot.queues.length
-  readonly property int saveIndex: optionOffset + commonOptions.length
+  readonly property int saveIndex: optionOffset + displayOptions.length
   readonly property int settingsIndex: targetCount - 1
   readonly property bool busy: backend.running
   readonly property bool hasProblem: snapshot.queues.some(function(queue) {
@@ -56,6 +59,7 @@ Panel {
       cursorIndex = 0
       refresh()
     } else {
+      pendingOptionsQueueIndex = -1
       closeOptionPopups()
       controlPopupOpen = false
     }
@@ -75,13 +79,50 @@ Panel {
     backendTimeout.restart()
   }
 
-  function selectQueue(index) {
+  function expandQueue(index) {
     if (busy || index < 0 || index >= snapshot.queues.length) return
     selectedQueueIndex = index
+    var queueName = snapshot.queues[index].name
+    var cached = optionCache[queueName]
+    if (cached !== undefined) {
+      applyOptions(cached)
+      return
+    }
     options = []
     optionValues = ({})
     cursorIndex = Math.min(cursorIndex, settingsIndex)
-    runBackend("options", ["--queue", snapshot.queues[index].name])
+    activeQueueName = queueName
+    runBackend("options", ["--queue", queueName])
+  }
+
+  function toggleQueue(index) {
+    if (index < 0 || index >= snapshot.queues.length) return
+    if (selectedQueueIndex === index) {
+      if (busy && activeCommand !== "options") return
+      closeOptionPopups()
+      selectedQueueIndex = -1
+      options = []
+      optionValues = ({})
+      cursorIndex = Math.min(cursorIndex, settingsIndex)
+      return
+    }
+    if (busy) return
+    expandQueue(index)
+  }
+
+  function applyOptions(nextOptions) {
+    options = nextOptions || []
+    var values = {}
+    for (var i = 0; i < options.length; i++)
+      values[options[i].name] = options[i].default
+    optionValues = values
+    cursorIndex = Math.min(cursorIndex, settingsIndex)
+  }
+
+  function cacheOptions(queueName, nextOptions) {
+    var next = Object.assign({}, optionCache)
+    next[queueName] = nextOptions || []
+    optionCache = next
   }
 
   function closeOptionPopups() {
@@ -92,10 +133,10 @@ Panel {
   }
 
   function saveOptions() {
-    if (!selectedQueue || commonOptions.length === 0) return
+    if (!selectedQueue || displayOptions.length === 0) return
     var values = {}
-    for (var i = 0; i < commonOptions.length; i++) {
-      var option = commonOptions[i]
+    for (var i = 0; i < displayOptions.length; i++) {
+      var option = displayOptions[i]
       values[option.name] = optionValues[option.name]
     }
     runBackend("set-options", [
@@ -124,7 +165,7 @@ Panel {
   function targetItem(index) {
     if (index < snapshot.queues.length) return queueRepeater.itemAt(index)
     if (index < saveIndex) return optionRepeater.itemAt(index - optionOffset)
-    if (commonOptions.length > 0 && index === saveIndex) return saveRow
+    if (displayOptions.length > 0 && index === saveIndex) return saveRow
     return settingsRow
   }
 
@@ -148,7 +189,7 @@ Panel {
     var activeIndex = Math.max(0, Math.min(settingsIndex, cursorIndex))
     cursorIndex = activeIndex
     if (activeIndex < snapshot.queues.length) {
-      selectQueue(activeIndex)
+      toggleQueue(activeIndex)
       return
     }
     if (activeIndex < saveIndex) {
@@ -156,7 +197,7 @@ Panel {
       if (optionItem) optionItem.toggle()
       return
     }
-    if (commonOptions.length > 0 && activeIndex === saveIndex) {
+    if (displayOptions.length > 0 && activeIndex === saveIndex) {
       saveOptions()
       return
     }
@@ -171,6 +212,7 @@ Panel {
 
   function handleSuccess(command, data) {
     if (command === "snapshot") {
+      var previousQueueName = selectedQueue ? selectedQueue.name : ""
       snapshot = {
         queues: data.queues || [],
         available: data.available || []
@@ -179,29 +221,47 @@ Panel {
         selectedQueueIndex = -1
         options = []
         optionValues = ({})
+        pendingOptionsQueueIndex = -1
         cursorIndex = settingsIndex
         return
       }
       var defaultIndex = 0
       for (var i = 0; i < snapshot.queues.length; i++) {
-        if (snapshot.queues[i].isDefault) {
+        if (snapshot.queues[i].name === previousQueueName) {
           defaultIndex = i
           break
         }
+        if (snapshot.queues[i].isDefault) {
+          defaultIndex = i
+        }
       }
-      selectQueue(defaultIndex)
+      selectedQueueIndex = defaultIndex
+      var cached = optionCache[snapshot.queues[defaultIndex].name]
+      if (cached !== undefined) {
+        applyOptions(cached)
+      } else {
+        options = []
+        optionValues = ({})
+        pendingOptionsQueueIndex = defaultIndex
+        deferredOptionsLoad.restart()
+      }
       return
     }
     if (command === "options") {
-      options = data.options || []
-      var values = {}
-      for (var i = 0; i < options.length; i++)
-        values[options[i].name] = options[i].default
-      optionValues = values
-      cursorIndex = Math.min(cursorIndex, settingsIndex)
+      var loadedOptions = data.options || []
+      cacheOptions(activeQueueName, loadedOptions)
+      if (selectedQueue && selectedQueue.name === activeQueueName)
+        applyOptions(loadedOptions)
       return
     }
     if (command === "set-options") {
+      var updatedOptions = options.map(function(option) {
+        var updated = Object.assign({}, option)
+        updated.default = optionValues[option.name]
+        return updated
+      })
+      options = updatedOptions
+      if (selectedQueue) cacheOptions(selectedQueue.name, updatedOptions)
       statusKind = "success"
       statusMessage = "Defaults saved"
     }
@@ -219,6 +279,9 @@ Panel {
       return
     }
     if (!response.ok) {
+      if (activeCommand === "options"
+          && (!selectedQueue || selectedQueue.name !== activeQueueName))
+        return
       statusKind = "error"
       statusMessage = response.error && response.error.message
         ? String(response.error.message) : "Printer operation failed"
@@ -376,6 +439,7 @@ Panel {
                   spacing: Style.space(10)
 
                   Text {
+                    id: presenceDot
                     text: modelData.online ? "●" : "○"
                     color: modelData.online ? Color.flatColor("green", root.bar.foreground) : Color.muted
                     font.family: root.bar.fontFamily
@@ -383,7 +447,7 @@ Panel {
                   }
 
                   Column {
-                    width: parent.width - parent.children[0].width - parent.spacing
+                    width: parent.width - presenceDot.width - expandIcon.width - parent.spacing * 2
                     spacing: Style.space(2)
 
                     Text {
@@ -405,6 +469,15 @@ Panel {
                       elide: Text.ElideRight
                     }
                   }
+
+                  Text {
+                    id: expandIcon
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: root.selectedQueueIndex === index ? "󰅃" : "󰅀"
+                    color: Color.muted
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.body
+                  }
                 }
 
                 MouseArea {
@@ -412,8 +485,9 @@ Panel {
                   hoverEnabled: true
                   cursorShape: Qt.PointingHandCursor
                   enabled: !root.busy
+                    || (root.activeCommand === "options" && root.selectedQueueIndex === index)
                   onPositionChanged: function(mouse) { root.setPointerCursor(index, queueRow, mouse) }
-                  onClicked: root.selectQueue(index)
+                  onClicked: root.toggleQueue(index)
                 }
               }
             }
@@ -429,7 +503,7 @@ Panel {
           }
 
           Column {
-            visible: root.selectedQueue && root.commonOptions.length > 0
+            visible: root.selectedQueue && root.displayOptions.length > 0
             width: parent.width
             spacing: Style.space(10)
 
@@ -438,14 +512,14 @@ Panel {
             }
 
             PanelSectionHeader {
-              text: "QUICK DEFAULTS"
+              text: "PRINTER OPTIONS"
               foreground: root.bar.foreground
               fontFamily: root.bar.fontFamily
             }
 
             Repeater {
               id: optionRepeater
-              model: root.commonOptions
+              model: root.displayOptions
 
               Dropdown {
                 required property var modelData
@@ -495,6 +569,30 @@ Panel {
                 onPositionChanged: function(mouse) { root.setPointerCursor(root.saveIndex, saveRow, mouse) }
                 onClicked: root.saveOptions()
               }
+            }
+          }
+
+          Column {
+            visible: root.selectedQueue && root.displayOptions.length === 0
+            width: parent.width
+            spacing: Style.space(10)
+
+            PanelSeparator {
+              foreground: root.bar.foreground
+            }
+
+            PanelSectionHeader {
+              text: "PRINTER OPTIONS"
+              foreground: root.bar.foreground
+              fontFamily: root.bar.fontFamily
+            }
+
+            Text {
+              width: parent.width
+              text: root.busy ? "Loading printer options…" : "No configurable options"
+              color: Color.muted
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.bodySmall
             }
           }
 
@@ -568,6 +666,21 @@ Panel {
       onStreamFinished: if (text) console.warn("omarchy-printers:", text.trim())
     }
     onExited: root.handleBackendResult()
+  }
+
+  Timer {
+    id: deferredOptionsLoad
+    interval: 10
+    onTriggered: {
+      if (backend.running) {
+        restart()
+        return
+      }
+      var index = root.pendingOptionsQueueIndex
+      root.pendingOptionsQueueIndex = -1
+      if (root.opened && index >= 0 && root.selectedQueueIndex === index)
+        root.expandQueue(index)
+    }
   }
 
   Timer {

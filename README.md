@@ -1,7 +1,7 @@
 # Omarchy Printers
 
 A keyboard-first Omarchy Shell printer widget. Its compact bar popup follows
-the built-in Wi-Fi visual language for status and common defaults; **Open
+the built-in Wi-Fi visual language for status and printer options; **Open
 printer settings** opens the full management panel.
 
 ![Installed printer view](docs/screenshots/installed.png)
@@ -54,7 +54,7 @@ omarchy plugin enable segersb.omarchy-printers
 ## Open
 
 Enabling the plugin adds its printer icon to the right side of the bar. Click
-it for printer status and common defaults.
+it for printer status and configurable defaults.
 
 The full settings panel can also be opened directly:
 
