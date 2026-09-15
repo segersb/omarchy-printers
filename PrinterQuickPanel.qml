@@ -32,6 +32,12 @@ Panel {
   readonly property var selectedQueue: selectedQueueIndex >= 0
     && selectedQueueIndex < snapshot.queues.length
       ? snapshot.queues[selectedQueueIndex] : null
+  readonly property var summaryQueue: {
+    if (selectedQueue) return selectedQueue
+    for (var i = 0; i < snapshot.queues.length; i++)
+      if (snapshot.queues[i].isDefault) return snapshot.queues[i]
+    return snapshot.queues.length > 0 ? snapshot.queues[0] : null
+  }
   readonly property var displayOptions: PrinterState.quickOptions(options)
   readonly property int targetCount: snapshot.queues.length
     + displayOptions.length
@@ -366,7 +372,7 @@ Panel {
 
               Text {
                 width: parent.width
-                text: root.selectedQueue ? root.selectedQueue.name : "Printers"
+                text: root.summaryQueue ? root.summaryQueue.name : "Printers"
                 color: root.bar.foreground
                 font.family: root.bar.fontFamily
                 font.pixelSize: Style.font.title
@@ -376,10 +382,10 @@ Panel {
 
               Text {
                 width: parent.width
-                text: root.selectedQueue
-                  ? PrinterState.queueStatus(root.selectedQueue).toUpperCase()
+                text: root.summaryQueue
+                  ? PrinterState.queueStatus(root.summaryQueue).toUpperCase()
                   : (root.busy ? "CHECKING PRINTERS" : "NO PRINTERS ADDED")
-                color: root.selectedQueue && root.selectedQueue.online
+                color: root.summaryQueue && root.summaryQueue.online
                   ? Color.flatColor("green", root.bar.foreground)
                   : Color.muted
                 font.family: root.bar.fontFamily
