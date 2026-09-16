@@ -20,9 +20,16 @@ defaults exposed by the local queue, then links to `PrinterPanel.qml` for full
 administration. The quick popup deliberately excludes add/remove, pause,
 legacy discovery, and test-page actions.
 
-Opening either surface and refreshing use the unprivileged snapshot path.
-Changing defaults is an explicit mutation and may invoke PolicyKit only after
-the user chooses **Save defaults**.
+The quick widget reads installed queues once when its bar instance starts,
+then serves popup opens entirely from memory. Its refresh button and successful
+mutations in the full panel trigger another lightweight CUPS queue read; they
+do not run device discovery. Status labels reflect CUPS queue state—Ready,
+Printing, Paused, or Needs attention—rather than network rediscovery.
+
+Opening the full settings surface and using its discovery controls remain
+unprivileged unless the user explicitly chooses **Find more**. Changing
+defaults is an explicit mutation and may invoke PolicyKit only after the user
+chooses **Save defaults**.
 
 ## Read path
 

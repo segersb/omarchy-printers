@@ -54,7 +54,8 @@ omarchy plugin enable segersb.omarchy-printers
 ## Open
 
 Enabling the plugin adds its printer icon to the right side of the bar. Click
-it for printer status and configurable defaults.
+it for cached CUPS queue state and configurable defaults. Opening the popup
+does not scan for printers; use its refresh button to reload external changes.
 
 The full settings panel can also be opened directly:
 

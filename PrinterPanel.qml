@@ -320,6 +320,8 @@ Item {
       selectedQueue = null
     } else if (command === "test-page") statusMessage = "Test page sent"
     else if (command === "set-options") statusMessage = "Defaults saved"
+    if (["add", "remove", "set-default", "set-enabled", "set-options"].indexOf(command) >= 0)
+      quickRefreshAfterAction.restart()
     refreshAfterAction.restart()
   }
 
@@ -390,6 +392,14 @@ Item {
     id: refreshAfterAction
     interval: 350
     onTriggered: root.refresh()
+  }
+
+  Timer {
+    id: quickRefreshAfterAction
+    interval: 500
+    onTriggered: Quickshell.execDetached([
+      "omarchy-shell", "segersb.omarchy-printers.quick", "refresh"
+    ])
   }
 
   Timer {
@@ -644,9 +654,10 @@ Item {
             width: ListView.view.width
             title: modelData.name
             subtitle: PrinterState.queueStatus(modelData)
-            statusColor: modelData.enabled && modelData.online
-              ? Color.flatColor("green", root.accent)
-              : Color.muted
+            statusColor: PrinterState.queueStateKind(modelData) === "attention"
+              ? Color.urgent
+              : (PrinterState.queueStateKind(modelData) === "paused"
+                ? Color.muted : Color.flatColor("green", root.accent))
             hasCursor: root.focusSection === "installed" && root.selectedIndex === index
             actionText: "Manage"
             busy: root.busy && root.activeIdentity === modelData.identity
@@ -723,8 +734,12 @@ Item {
 
       Text {
         text: root.selectedQueue ? PrinterState.queueStatus(root.selectedQueue) : ""
-        color: root.selectedQueue && root.selectedQueue.enabled && root.selectedQueue.online
-          ? Color.flatColor("green", root.accent) : Color.muted
+        color: root.selectedQueue
+          && PrinterState.queueStateKind(root.selectedQueue) === "attention"
+            ? Color.urgent
+            : (root.selectedQueue
+                && PrinterState.queueStateKind(root.selectedQueue) !== "paused"
+              ? Color.flatColor("green", root.accent) : Color.muted)
         font.family: Style.font.family
         font.pixelSize: Style.font.body
       }

@@ -11,6 +11,7 @@ Panel {
 
   moduleName: "segersb.omarchy-printers"
   ipcTarget: "segersb.omarchy-printers.quick"
+  manageIpc: false
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
@@ -29,6 +30,9 @@ Panel {
   property bool cursorActive: false
   property int cursorIndex: 0
   property int pendingOptionsQueueIndex: -1
+  property bool initialized: false
+  property bool pendingRefresh: false
+  property bool pendingRefreshInvalidatesOptions: false
 
   readonly property var selectedQueue: selectedQueueIndex >= 0
     && selectedQueueIndex < snapshot.queues.length
@@ -44,8 +48,9 @@ Panel {
   readonly property int saveIndex: optionOffset + displayOptions.length
   readonly property int settingsIndex: targetCount - 1
   readonly property bool busy: backend.running
+  readonly property bool settingsBusy: busy
   readonly property bool hasProblem: snapshot.queues.some(function(queue) {
-    return !queue.enabled || queue.online === false
+    return PrinterState.queueStateKind(queue) === "attention"
   })
   readonly property string icon: "󰐪"
 
@@ -60,16 +65,37 @@ Panel {
     if (opened) {
       cursorActive = false
       cursorIndex = 0
-      refresh()
     } else {
-      pendingOptionsQueueIndex = -1
       closeOptionPopups()
       controlPopupOpen = false
     }
   }
 
-  function refresh() {
-    runBackend("snapshot", ["--timeout", "2"])
+  function refresh(invalidateOptions) {
+    if (backend.running) {
+      pendingRefresh = true
+      if (invalidateOptions === true) pendingRefreshInvalidatesOptions = true
+      return
+    }
+    if (invalidateOptions === true) optionCache = ({})
+    pendingRefresh = false
+    pendingRefreshInvalidatesOptions = false
+    runBackend("queues", [])
+  }
+
+  function runPendingRefresh() {
+    if (backend.running || !pendingRefresh) return
+    var invalidateOptions = pendingRefreshInvalidatesOptions
+    pendingRefresh = false
+    pendingRefreshInvalidatesOptions = false
+    refresh(invalidateOptions)
+  }
+
+  function refreshAll() {
+    var items = bar && typeof bar.moduleWidgets === "function"
+      ? bar.moduleWidgets(moduleName) : [root]
+    for (var i = 0; i < items.length; i++)
+      if (items[i] && typeof items[i].refresh === "function") items[i].refresh(true)
   }
 
   function runBackend(command, args) {
@@ -217,11 +243,11 @@ Panel {
   }
 
   function handleSuccess(command, data) {
-    if (command === "snapshot") {
+    if (command === "queues") {
       var previousQueueName = selectedQueue ? selectedQueue.name : ""
       snapshot = {
         queues: data.queues || [],
-        available: data.available || []
+        available: []
       }
       if (snapshot.queues.length === 0) {
         selectedQueueIndex = -1
@@ -229,26 +255,32 @@ Panel {
         optionValues = ({})
         pendingOptionsQueueIndex = -1
         cursorIndex = settingsIndex
+        initialized = true
         return
       }
-      var defaultIndex = 0
+      var defaultIndex = -1
+      var previousIndex = -1
       for (var i = 0; i < snapshot.queues.length; i++) {
-        if (snapshot.queues[i].name === previousQueueName) {
-          defaultIndex = i
-          break
-        }
-        if (snapshot.queues[i].isDefault) {
-          defaultIndex = i
-        }
+        if (snapshot.queues[i].name === previousQueueName) previousIndex = i
+        if (snapshot.queues[i].isDefault) defaultIndex = i
       }
-      selectedQueueIndex = defaultIndex
-      var cached = optionCache[snapshot.queues[defaultIndex].name]
+      if (initialized && previousQueueName === "") {
+        selectedQueueIndex = -1
+        options = []
+        optionValues = ({})
+        return
+      }
+      var nextIndex = previousIndex >= 0 ? previousIndex
+        : (defaultIndex >= 0 ? defaultIndex : 0)
+      selectedQueueIndex = nextIndex
+      initialized = true
+      var cached = optionCache[snapshot.queues[nextIndex].name]
       if (cached !== undefined) {
         applyOptions(cached)
       } else {
         options = []
         optionValues = ({})
-        pendingOptionsQueueIndex = defaultIndex
+        pendingOptionsQueueIndex = nextIndex
         deferredOptionsLoad.restart()
       }
       return
@@ -306,6 +338,17 @@ Panel {
     active: root.hasProblem
     tooltipText: root.hasProblem ? "Printer needs attention" : "Printers"
     onPressed: root.toggle()
+  }
+
+  IpcHandler {
+    target: root.ipcTarget
+
+    function open() { root.open() }
+    function close() { root.close() }
+    function show() { root.open() }
+    function hide() { root.close() }
+    function toggle() { root.toggle() }
+    function refresh(): string { root.refreshAll(); return "ok" }
   }
 
   KeyboardPanel {
@@ -398,7 +441,7 @@ Panel {
           tooltipText: "Refresh"
           foreground: root.bar.foreground
           enabled: !root.busy
-          onClicked: root.refresh()
+          onClicked: root.refresh(true)
         }
       }
 
@@ -459,8 +502,11 @@ Panel {
 
                   Text {
                     id: presenceDot
-                    text: modelData.online ? "●" : "○"
-                    color: modelData.online ? Color.flatColor("green", root.bar.foreground) : Color.muted
+                    readonly property string stateKind: PrinterState.queueStateKind(modelData)
+                    text: stateKind === "paused" ? "○" : "●"
+                    color: stateKind === "attention" ? Color.urgent
+                      : (stateKind === "paused" ? Color.muted
+                        : Color.flatColor("green", root.bar.foreground))
                     font.family: root.bar.fontFamily
                     font.pixelSize: Style.font.body
                   }
@@ -503,7 +549,7 @@ Panel {
                   anchors.fill: parent
                   hoverEnabled: true
                   cursorShape: Qt.PointingHandCursor
-                  enabled: !root.busy
+                  enabled: !root.settingsBusy
                     || (root.activeCommand === "options" && root.selectedQueueIndex === index)
                   onPositionChanged: function(mouse) { root.setPointerCursor(index, queueRow, mouse) }
                   onClicked: root.toggleQueue(index)
@@ -548,7 +594,7 @@ Panel {
 
                 width: parent.width
                 height: optionDropdown.implicitHeight
-                opacity: root.busy ? 0.6 : 1
+                opacity: root.settingsBusy ? 0.6 : 1
 
                 function close() { optionDropdown.close() }
                 function toggle() { optionDropdown.toggle() }
@@ -571,7 +617,7 @@ Panel {
                   anchors.right: parent.right
                   anchors.verticalCenter: parent.verticalCenter
                   showLabel: false
-                  enabled: !root.busy
+                  enabled: !root.settingsBusy
                   value: String(root.optionValues[optionRow.modelData.name] || "")
                   options: PrinterState.optionChoices(optionRow.modelData)
                   foreground: root.bar.foreground
@@ -722,7 +768,10 @@ Panel {
       waitForEnd: true
       onStreamFinished: if (text) console.warn("omarchy-printers:", text.trim())
     }
-    onExited: root.handleBackendResult()
+    onExited: {
+      root.handleBackendResult()
+      Qt.callLater(root.runPendingRefresh)
+    }
   }
 
   Timer {
@@ -735,9 +784,11 @@ Panel {
       }
       var index = root.pendingOptionsQueueIndex
       root.pendingOptionsQueueIndex = -1
-      if (root.opened && index >= 0 && root.selectedQueueIndex === index)
+      if (index >= 0 && root.selectedQueueIndex === index)
         root.expandQueue(index)
     }
+
+    Component.onCompleted: Qt.callLater(function() { root.refresh(false) })
   }
 
   Timer {

@@ -612,6 +612,10 @@ class PrinterBackend:
         result.update(self.helper.preflight())
         return result
 
+    def queues(self, _: Mapping[str, Any]) -> dict[str, Any]:
+        default, queues = self.cups.queues()
+        return {"default": default, "queues": queues}
+
     def snapshot(self, request: Mapping[str, Any]) -> dict[str, Any]:
         default, queues = self.cups.queues()
         warning = None
@@ -786,6 +790,7 @@ def required_int(request: Mapping[str, Any], key: str, minimum: int | None = Non
 
 COMMANDS = {
     "preflight": "preflight",
+    "queues": "queues",
     "snapshot": "snapshot",
     "models": "models",
     "add": "add",
@@ -881,6 +886,7 @@ def build_parser() -> argparse.ArgumentParser:
         return child
 
     command_parser("preflight")
+    command_parser("queues")
 
     snapshot = command_parser("snapshot")
     snapshot.add_argument("--timeout", type=int)

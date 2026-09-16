@@ -379,6 +379,10 @@ class OperationsTests(unittest.TestCase):
             self.backend.options({"queue": "Office"})["defaults"]["Duplex"], "None"
         )
 
+    def test_queues_does_not_run_discovery(self):
+        self.assertEqual(self.backend.queues({})["queues"][0]["name"], "Office")
+        self.assertEqual(self.helper.calls, [])
+
     def test_cancel_job_uses_purge_method(self):
         self.backend.cancel_job({"jobId": 12, "purge": True})
         self.assertEqual(self.helper.calls, [("JobCancelPurge", 12, True)])
@@ -562,6 +566,10 @@ class CLITests(unittest.TestCase):
             printers._request_from_args(args),
             {"queue": "Office", "options": {"Duplex": "None"}},
         )
+
+    def test_queues_command_takes_no_arguments(self):
+        args = printers.build_parser().parse_args(["queues"])
+        self.assertEqual(printers._request_from_args(args), {})
 
     def test_invalid_argv_produces_only_json_on_stdout(self):
         stdout = io.StringIO()

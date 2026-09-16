@@ -58,11 +58,28 @@ function preserveCursor(state, section, identity) {
 }
 
 function queueStatus(queue) {
-  if (!queue.enabled) return queue.isDefault ? "Paused · Default" : "Paused"
-  if (queue.online === null || typeof queue.online === "undefined")
-    return queue.isDefault ? "Status unavailable · Default" : "Status unavailable"
-  if (queue.online) return queue.isDefault ? "Online · Default" : "Online"
-  return queue.isDefault ? "Unavailable · Default" : "Unavailable"
+  var kind = queueStateKind(queue)
+  var labels = {
+    attention: "Needs attention",
+    paused: "Paused",
+    printing: "Printing",
+    ready: "Ready"
+  }
+  var label = labels[kind]
+  return queue.isDefault ? label + " · Default" : label
+}
+
+function queueStateKind(queue) {
+  var reasons = queue && queue["printer-state-reasons"]
+  if (!Array.isArray(reasons)) reasons = reasons ? [reasons] : []
+  var attention = reasons.some(function(reason) {
+    var text = String(reason || "").toLowerCase()
+    return /(error|empty|jam|open|offline|unreachable|timed-out|failed|missing)/.test(text)
+  })
+  if (attention) return "attention"
+  if (Number(queue.state) === 5 || !queue.enabled || !queue.accepting) return "paused"
+  if (Number(queue.state) === 4) return "printing"
+  return "ready"
 }
 
 function applyPresenceGrace(queues, lastSeen, now, graceMs) {
@@ -215,6 +232,7 @@ if (typeof module !== "undefined") {
     moveCursor: moveCursor,
     preserveCursor: preserveCursor,
     queueStatus: queueStatus,
+    queueStateKind: queueStateKind,
     applyPresenceGrace: applyPresenceGrace,
     mergeAvailable: mergeAvailable,
     quickOptions: quickOptions,

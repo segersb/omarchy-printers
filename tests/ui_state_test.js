@@ -47,34 +47,47 @@ assert.deepEqual(state.moveCursor(sample, "available", 1, 1), {
 })
 assert.equal(state.queueStatus({
   enabled: true,
-  online: true,
+  accepting: true,
+  state: 3,
   isDefault: true
-}), "Online · Default")
+}), "Ready · Default")
 assert.equal(state.queueStatus({
   enabled: false,
-  online: true,
+  accepting: false,
+  state: 5,
   isDefault: false
 }), "Paused")
 assert.equal(state.queueStatus({
   enabled: false,
-  online: true,
+  accepting: false,
+  state: 5,
   isDefault: true
 }), "Paused · Default")
 assert.equal(state.queueStatus({
   enabled: true,
-  online: false,
+  accepting: true,
+  state: 4,
   isDefault: false
-}), "Unavailable")
+}), "Printing")
 assert.equal(state.queueStatus({
-  enabled: true,
-  online: false,
+  enabled: false,
+  accepting: true,
+  state: 5,
+  "printer-state-reasons": ["media-empty-error"],
   isDefault: true
-}), "Unavailable · Default")
-assert.equal(state.queueStatus({
-  enabled: true,
-  online: null,
-  isDefault: true
-}), "Status unavailable · Default")
+}), "Needs attention · Default")
+assert.equal(state.queueStateKind({
+  enabled: false,
+  accepting: true,
+  state: 5,
+  "printer-state-reasons": ["media-empty-error"]
+}), "attention")
+assert.equal(state.queueStateKind({
+  enabled: false,
+  accepting: true,
+  state: 5,
+  "printer-state-reasons": ["paused"]
+}), "paused")
 
 const present = state.applyPresenceGrace([
   { identity: "printer-a", online: true }
