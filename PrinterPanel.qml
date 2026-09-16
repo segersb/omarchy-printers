@@ -38,6 +38,8 @@ Item {
   property bool pendingSnapshotAfterQueues: false
   property bool pendingSnapshotIncludesLegacy: false
   property bool busy: backend.running
+  readonly property bool fullScanActive: pendingSnapshotAfterQueues
+    ? pendingSnapshotIncludesLegacy : activeLegacyDiscovery
 
   readonly property string pluginDir: {
     var path = Qt.resolvedUrl(".").toString()
@@ -548,15 +550,18 @@ Item {
 
           Button {
             visible: root.viewName === "main"
-            text: root.busy ? "Refreshing…" : "Refresh"
-            iconText: "󰑐"
+            text: root.busy && !root.fullScanActive ? "Scanning…" : "Network scan"
+            iconText: "󰌗"
+            tooltipText: "Find driverless network printers"
             enabled: !root.busy
             onClicked: root.refresh()
           }
 
           Button {
             visible: root.viewName === "main"
-            text: "Find more"
+            text: root.busy && root.fullScanActive ? "Scanning…" : "Full scan"
+            iconText: "󰐷"
+            tooltipText: "Find all printers · May require authentication"
             enabled: !root.busy
             onClicked: root.refresh(true)
           }
@@ -611,7 +616,7 @@ Item {
 
         Text {
           visible: root.viewName === "main"
-          text: "j/k or arrows navigate · enter select · r refresh · f find more · esc close"
+          text: "j/k or arrows navigate · enter select · r network scan · f full scan · esc close"
           color: Util.alpha(Color.muted, 0.75)
           font.family: Style.font.family
           font.pixelSize: Style.font.caption

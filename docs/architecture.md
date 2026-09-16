@@ -28,17 +28,17 @@ Printing, Paused, or Needs attention—rather than network rediscovery.
 
 The full settings surface reads installed queues first so they appear without
 waiting for discovery, then merges the slower discovery result into the panel.
-Opening the panel and using normal refresh remain unprivileged; only **Find
-more** can invoke privileged discovery. Changing defaults is an explicit
+Opening the panel and using **Network scan** remain unprivileged; only **Full
+scan** can invoke privileged discovery. Changing defaults is an explicit
 mutation and may invoke PolicyKit only after the user chooses **Save defaults**.
 
 ## Read path
 
 - pycups reads installed queues, printer attributes, jobs, defaults, and local
   model metadata.
-- The unprivileged CUPS `driverless` helper handles normal launch and refresh,
-  so opening the panel never asks for administrator approval.
-- The explicit **Find more** action uses `cups-pk-helper` because CUPS protects
+- The unprivileged CUPS `driverless` helper handles normal launch and
+  **Network scan**, so opening the panel never asks for administrator approval.
+- The explicit **Full scan** action uses `cups-pk-helper` because CUPS protects
   legacy `getDevices()` discovery on the default Omarchy installation.
 - If that discovery call is unavailable, the CUPS `driverless` helper keeps
   IPP printers visible while the panel clearly warns that some printers may

@@ -30,10 +30,10 @@ Current Omarchy installations already include the required packages:
 CUPS must be running. Privileged actions use the system CUPS PolicyKit helper
 and Omarchy's existing authentication agent.
 
-Opening the panel and using **Refresh** are read-only and do not request
-administrator approval. **Find more** searches legacy CUPS transports and may
-show a PolicyKit prompt; cancelling it leaves installed and driverless
-printers available.
+Opening the panel and using **Network scan** are read-only and do not request
+administrator approval. **Full scan** searches all CUPS transports and may show
+a PolicyKit prompt; cancelling it leaves installed and driverless printers
+available.
 
 ## Install
 
@@ -93,8 +93,8 @@ Full settings:
 
 - `j` / `k` or arrows: move
 - `Enter` or Space: activate
-- `r`: refresh the printer list
-- `f`: find additional legacy printers (may request administrator approval)
+- `r`: scan for driverless network printers
+- `f`: scan all CUPS transports (may request administrator approval)
 - `Esc`: go back or close
 - Tab: move through form controls
 
@@ -126,7 +126,7 @@ journalctl --user --since "1 minute ago" --no-pager |
 
 - **No printers appear:** confirm CUPS is running with
   `systemctl status cups`.
-- **A legacy printer is missing:** choose **Find more** or press `f`, then
+- **A legacy printer is missing:** choose **Full scan** or press `f`, then
   approve the system prompt. Cancelling is safe.
 - **A driver is missing:** install the vendor/CUPS driver package separately;
   this plugin only offers models already installed on the system.
