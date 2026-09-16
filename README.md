@@ -104,6 +104,9 @@ Full settings:
 - `Esc`: go back or close
 - Tab: move through form controls
 
+On management and settings pages, moving above the first item focuses
+**Back** so it can be activated from the keyboard.
+
 The compact popup intentionally omits administrative actions such as adding,
 removing, pausing, and printing a test page. Use **Open printer settings** for
 the full panel.

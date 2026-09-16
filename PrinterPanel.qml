@@ -36,6 +36,7 @@ Item {
   property bool backendTimedOut: false
   property bool pendingSnapshotAfterQueues: false
   property bool pendingSnapshotIncludesLegacy: false
+  property bool pendingQueueEnabled: false
   property bool busy: backend.running
   readonly property bool fullScanActive: pendingSnapshotAfterQueues
     ? pendingSnapshotIncludesLegacy : activeLegacyDiscovery
@@ -107,6 +108,16 @@ Item {
       shell.hide("segersb.omarchy-printers")
     else
       window.visible = false
+  }
+
+  function keyboardHint() {
+    if (viewName === "main")
+      return "j/k or arrows navigate · enter select · r network scan · f full scan · esc close"
+    if (viewName === "jobs")
+      return "j/k or arrows navigate · enter cancel job · esc back"
+    if (viewName === "options")
+      return "j/k or arrows navigate · enter change · esc back"
+    return "j/k or arrows navigate · enter select · esc back"
   }
 
   function rowIdentity() {
@@ -183,8 +194,13 @@ Item {
     selectedActionId = action
     if (action === "default")
       runBackend("set-default", ["--queue", selectedQueue.name], selectedQueue.identity)
-    else if (action === "enabled")
-      runBackend("set-enabled", ["--queue", selectedQueue.name, "--enabled", selectedQueue.enabled ? "false" : "true"], selectedQueue.identity)
+    else if (action === "enabled") {
+      pendingQueueEnabled = !selectedQueue.enabled
+      runBackend("set-enabled", [
+        "--queue", selectedQueue.name,
+        "--enabled", pendingQueueEnabled ? "true" : "false"
+      ], selectedQueue.identity)
+    }
     else if (action === "jobs")
       runBackend("jobs", ["--queue", selectedQueue.name], selectedQueue.identity)
     else if (action === "options")
@@ -257,6 +273,19 @@ Item {
     return response && response.data ? response.data : ({})
   }
 
+  function updateSelectedQueue() {
+    if (!selectedQueue) return
+    var updatedQueue = null
+    for (var i = 0; i < snapshot.queues.length; i++) {
+      if (snapshot.queues[i].identity === selectedQueue.identity) {
+        updatedQueue = snapshot.queues[i]
+        break
+      }
+    }
+    selectedQueue = updatedQueue
+    if (!selectedQueue && viewName !== "main") viewName = "main"
+  }
+
   function handleSuccess(command, data) {
     failedIdentity = ""
     if (command === "queues") {
@@ -265,6 +294,7 @@ Item {
         queues: queues,
         available: PrinterState.mergeAvailable(snapshot.available, [], queues)
       }
+      updateSelectedQueue()
       if (viewName === "main") restoreCursor()
       return
     }
@@ -278,18 +308,7 @@ Item {
         statusKind = ""
         statusMessage = String(data.warning.message || "Printer discovery is unavailable")
       }
-      if (selectedQueue) {
-        var updatedQueue = null
-        for (var i = 0; i < snapshot.queues.length; i++) {
-          if (snapshot.queues[i].identity === selectedQueue.identity) {
-            updatedQueue = snapshot.queues[i]
-            break
-          }
-        }
-        selectedQueue = updatedQueue
-        if (!selectedQueue && viewName !== "main")
-          viewName = "main"
-      }
+      updateSelectedQueue()
       if (viewName === "main") {
         restoreCursor()
       } else if (viewName === "details") {
@@ -362,6 +381,12 @@ Item {
       statusMessage = "Printer removed"
       viewName = "main"
       selectedQueue = null
+    } else if (command === "set-enabled" && selectedQueue) {
+      var updated = Object.assign({}, selectedQueue)
+      updated.enabled = pendingQueueEnabled
+      updated.accepting = pendingQueueEnabled
+      selectedQueue = updated
+      statusMessage = pendingQueueEnabled ? "Printer resumed" : "Printer paused"
     } else if (command === "test-page") statusMessage = "Test page sent"
     else if (command === "set-options") statusMessage = "Defaults saved"
     if (["add", "remove", "set-default", "set-enabled", "set-options"].indexOf(command) >= 0)
@@ -484,14 +509,15 @@ Item {
               : (root.viewName === "models" ? 2
                 : (root.viewName === "options" ? root.options.length + 1 : 0)))
           if (count > 0) {
-            root.selectedIndex = Math.max(0, Math.min(count - 1, root.selectedIndex + dy))
+            root.selectedIndex = Math.max(-1, Math.min(count - 1, root.selectedIndex + dy))
             if (root.viewName === "details")
-              root.selectedActionId = root.detailActions()[root.selectedIndex]
+              root.selectedActionId = root.selectedIndex >= 0
+                ? root.detailActions()[root.selectedIndex] : ""
             else if (root.viewName === "jobs")
               Qt.callLater(function() { jobsView.ensureCursorVisible() })
             else if (root.viewName === "options")
               Qt.callLater(function() { optionsView.ensureCursorVisible() })
-          }
+          } else root.selectedIndex = -1
         }
       }
       onActivateRequested: {
@@ -500,7 +526,9 @@ Item {
           else confirmDialog.confirmed()
           return
         }
-        if (root.viewName === "main") root.activateMainRow()
+        if (root.viewName !== "main" && root.selectedIndex === -1)
+          root.requestClose()
+        else if (root.viewName === "main") root.activateMainRow()
         else if (root.viewName === "details") root.activateDetails()
         else if (root.viewName === "jobs" && root.selectedQueue && root.selectedIndex >= 0)
           root.runBackend("cancel-job", ["--job-id", String(root.jobs[root.selectedIndex].id)], root.selectedQueue.identity)
@@ -515,9 +543,9 @@ Item {
         if (confirmDialog.opened)
           confirmDialog.selectedIndex = confirmDialog.selectedIndex === 0 ? 1 : 0
         else if (root.viewName === "models")
-          root.selectedIndex = Math.max(0, Math.min(1, root.selectedIndex + direction))
+          root.selectedIndex = Math.max(-1, Math.min(1, root.selectedIndex + direction))
         else if (root.viewName === "options") {
-          root.selectedIndex = Math.max(0, Math.min(root.options.length, root.selectedIndex + direction))
+          root.selectedIndex = Math.max(-1, Math.min(root.options.length, root.selectedIndex + direction))
           Qt.callLater(function() { optionsView.ensureCursorVisible() })
         }
       }
@@ -545,6 +573,10 @@ Item {
             visible: root.viewName !== "main"
             text: "Back"
             iconText: "󰁍"
+            hasCursor: root.selectedIndex === -1
+            onHovered: function(on) {
+              if (on) root.selectedIndex = -1
+            }
             onClicked: root.requestClose()
           }
 
@@ -631,8 +663,7 @@ Item {
         }
 
         Text {
-          visible: root.viewName === "main"
-          text: "j/k or arrows navigate · enter select · r network scan · f full scan · esc close"
+          text: root.keyboardHint()
           color: Util.alpha(Color.muted, 0.75)
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
@@ -811,12 +842,26 @@ Item {
           }
           description: {
             if (modelData === "default") return "Use this printer unless another is selected"
-            if (modelData === "enabled") return "Temporarily stop or resume this queue"
+            if (modelData === "enabled") {
+              if (root.busy && root.activeCommand === "set-enabled")
+                return root.pendingQueueEnabled ? "Starting this queue…" : "Stopping this queue…"
+              return "Temporarily stop or resume this queue"
+            }
             if (modelData === "jobs") return "View and cancel queued jobs"
             if (modelData === "options") return "Paper, duplex, quality, and other defaults"
             if (modelData === "test") return "Send the standard CUPS test page"
             return "Delete this printer queue"
           }
+          actionText: modelData === "enabled"
+            ? (root.busy && root.activeCommand === "set-enabled"
+              ? (root.pendingQueueEnabled ? "Resuming…" : "Pausing…")
+              : (root.selectedQueue && root.selectedQueue.enabled ? "Pause" : "Resume"))
+            : (modelData === "default"
+              ? (root.busy && root.activeCommand === "set-default" ? "Setting…" : "Set default")
+              : (modelData === "test"
+                ? (root.busy && root.activeCommand === "test-page" ? "Sending…" : "Print")
+                : (modelData === "remove" ? "Remove" : "")))
+          enabled: !root.busy
           onPointerMoved: function(item, mouse) {
             if (!pointerGate.moved(item, mouse)) return
             root.selectedIndex = index
@@ -977,11 +1022,12 @@ Item {
           model: root.options
           delegate: Dropdown {
             required property var modelData
+            required property int index
             Layout.fillWidth: true
             hasCursor: root.selectedIndex === index
-            label: modelData.label
+            label: PrinterState.optionLabel(modelData)
             value: String(root.optionValues[modelData.name] || "")
-            options: modelData.choices || []
+            options: PrinterState.optionChoices(modelData)
             onPopupOpenChanged: root.controlPopupOpen = popupOpen
             onChanged: function(value) {
               var next = Object.assign({}, root.optionValues)
@@ -1078,6 +1124,7 @@ Item {
     id: actionRow
     property string title: ""
     property string description: ""
+    property string actionText: ""
     property bool urgentAction: false
     signal activated()
     signal pointerMoved(var item, var mouse)
@@ -1087,7 +1134,8 @@ Item {
 
     Column {
       anchors.left: parent.left
-      anchors.right: chevron.left
+      anchors.right: trailingAction.left
+      anchors.rightMargin: Style.spacing.rowGap
       anchors.verticalCenter: parent.verticalCenter
       anchors.leftMargin: actionRow.borderLeft + Style.spacing.rowPaddingX
       spacing: Style.spacing.xs
@@ -1112,20 +1160,21 @@ Item {
     }
 
     Text {
-      id: chevron
+      id: trailingAction
       anchors.right: parent.right
       anchors.rightMargin: actionRow.borderRight + Style.spacing.rowPaddingX
       anchors.verticalCenter: parent.verticalCenter
-      text: "󰅂"
+      text: actionRow.actionText || "󰅂"
       color: actionRow.urgentAction ? root.urgent : root.foreground
       font.family: Style.font.family
-      font.pixelSize: Style.font.icon
+      font.pixelSize: actionRow.actionText ? Style.font.body : Style.font.icon
     }
 
     MouseArea {
       anchors.fill: parent
       hoverEnabled: true
-      cursorShape: Qt.PointingHandCursor
+      enabled: actionRow.enabled
+      cursorShape: actionRow.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
       onPositionChanged: function(mouse) { actionRow.pointerMoved(actionRow, mouse) }
       onClicked: actionRow.activated()
     }
