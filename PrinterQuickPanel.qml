@@ -726,6 +726,7 @@ Panel {
 
         Text {
           anchors.left: parent.left
+          anchors.leftMargin: settingsRow.borderLeft + Style.spacing.rowPaddingX
           anchors.verticalCenter: parent.verticalCenter
           text: "Open printer settings"
           color: root.bar.foreground
@@ -735,6 +736,7 @@ Panel {
 
         Text {
           anchors.right: parent.right
+          anchors.rightMargin: settingsRow.borderRight + Style.spacing.rowPaddingX
           anchors.verticalCenter: parent.verticalCenter
           text: "󰅂"
           color: root.bar.foreground
