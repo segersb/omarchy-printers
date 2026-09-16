@@ -62,8 +62,12 @@ Identity is independent of a user-visible queue name:
 4. Normalized device URI as a final fallback.
 
 This identity drives Installed/Available filtering and cursor preservation.
-CUPS queue state and recent discovery presence remain separate so a paused
-queue is not reported as offline.
+When CUPS exposes an installed queue only by host URI while discovery exposes
+only its DNS-SD service, an exact normalized queue/service name is used as a
+final association fallback. A matched discovery record is removed from
+Available and shown as **Seen on network** on the installed queue. CUPS queue
+state and recent discovery presence remain separate so a paused queue is not
+reported as offline.
 
 ## Driver selection
 

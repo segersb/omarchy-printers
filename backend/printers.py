@@ -279,17 +279,40 @@ def dedupe_devices(devices: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]
 def filter_installed(
     devices: Iterable[Mapping[str, Any]], queues: Iterable[Mapping[str, Any]]
 ) -> list[dict[str, Any]]:
-    identities = {_text(queue.get("identity")) for queue in queues}
-    uris = {
-        normalize_uri(_text(queue.get("uri") or queue.get("device-uri")))
-        for queue in queues
-    }
+    installed = list(queues)
     return [
         dict(device)
         for device in devices
-        if _text(device.get("identity")) not in identities
-        and normalize_uri(_text(device.get("uri") or device.get("device-uri"))) not in uris
+        if not any(device_matches_queue(device, queue) for queue in installed)
     ]
+
+
+def device_matches_queue(
+    device: Mapping[str, Any], queue: Mapping[str, Any]
+) -> bool:
+    device_identity_value = _text(device.get("identity"))
+    queue_identity_value = _text(queue.get("identity"))
+    if device_identity_value and device_identity_value == queue_identity_value:
+        return True
+
+    device_uri = normalize_uri(_text(device.get("uri") or device.get("device-uri")))
+    queue_uri = normalize_uri(_text(queue.get("uri") or queue.get("device-uri")))
+    if device_uri and device_uri == queue_uri:
+        return True
+
+    device_names = {
+        _norm_words(_text(device.get(key)))
+        for key in ("name", "device-info", "device-make-and-model")
+        if _text(device.get(key))
+    }
+    device_names.discard("")
+    queue_names = {
+        _norm_words(_text(queue.get(key)))
+        for key in ("name", "printer-info", "printer-dns-sd-name")
+        if _text(queue.get(key))
+    }
+    queue_names.discard("")
+    return bool(device_names & queue_names)
 
 
 def _commands(value: str) -> set[str]:
@@ -636,13 +659,8 @@ class PrinterBackend:
                 }
         else:
             discovered = dedupe_devices(discover_driverless())
-        discovered_by_identity = {item["identity"] for item in discovered}
-        discovered_uris = {item["normalizedUri"] for item in discovered}
         for queue in queues:
-            found = (
-                queue["identity"] in discovered_by_identity
-                or normalize_uri(_text(queue.get("uri"))) in discovered_uris
-            )
+            found = any(device_matches_queue(device, queue) for device in discovered)
             queue["online"] = True if found else (
                 False if include_legacy and not warning else None
             )

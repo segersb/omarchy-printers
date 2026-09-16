@@ -232,6 +232,21 @@ class DiscoveryTests(unittest.TestCase):
         available = printers.filter_installed(devices, queues)
         self.assertEqual([item["identity"] for item in available], ["uuid:new"])
 
+    def test_matches_installed_by_normalized_queue_name(self):
+        device = printers.normalize_device(
+            {
+                "device-uri": "ipps://Brother%20HL-L2445DW._ipps._tcp.local/",
+                "device-info": "Brother HL-L2445DW",
+            }
+        )
+        queue = {
+            "name": "Brother_HL-L2445DW",
+            "identity": "uri:ipp://brwc4137538a799/ipp/print",
+            "uri": "ipps://BRWC4137538A799.local:443/ipp/print",
+        }
+        self.assertTrue(printers.device_matches_queue(device, queue))
+        self.assertEqual(printers.filter_installed([device], [queue]), [])
+
 
 class QueueNameTests(unittest.TestCase):
     def test_sanitizes_queue_name(self):
@@ -407,6 +422,16 @@ class OperationsTests(unittest.TestCase):
         queue = data["queues"][0]
         self.assertTrue(queue["enabled"])
         self.assertIsNone(queue["online"])
+
+    def test_snapshot_marks_name_matched_queue_seen_and_not_available(self):
+        discovered = {
+            "device-uri": "ipps://Office._ipps._tcp.local/",
+            "device-info": "Office",
+        }
+        with patch.object(printers, "discover_driverless", return_value=[discovered]):
+            data = self.backend.snapshot({})
+        self.assertTrue(data["queues"][0]["online"])
+        self.assertEqual(data["available"], [])
 
     def test_normal_snapshot_does_not_call_privileged_discovery(self):
         with patch.object(printers, "discover_driverless", return_value=[]):

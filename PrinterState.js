@@ -66,7 +66,10 @@ function queueStatus(queue) {
     ready: "Ready"
   }
   var label = labels[kind]
-  return queue.isDefault ? label + " · Default" : label
+  if (queue.isDefault) label += " · Default"
+  if (queue.online === true)
+    label += queue.presenceStale ? " · Seen recently" : " · Seen on network"
+  return label
 }
 
 function queueStateKind(queue) {

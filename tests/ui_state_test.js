@@ -52,6 +52,20 @@ assert.equal(state.queueStatus({
   isDefault: true
 }), "Ready · Default")
 assert.equal(state.queueStatus({
+  enabled: true,
+  accepting: true,
+  state: 3,
+  isDefault: true,
+  online: true
+}), "Ready · Default · Seen on network")
+assert.equal(state.queueStatus({
+  enabled: true,
+  accepting: true,
+  state: 3,
+  presenceStale: true,
+  online: true
+}), "Ready · Seen recently")
+assert.equal(state.queueStatus({
   enabled: false,
   accepting: false,
   state: 5,
