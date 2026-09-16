@@ -26,10 +26,11 @@ mutations in the full panel trigger another lightweight CUPS queue read; they
 do not run device discovery. Status labels reflect CUPS queue state—Ready,
 Printing, Paused, or Needs attention—rather than network rediscovery.
 
-Opening the full settings surface and using its discovery controls remain
-unprivileged unless the user explicitly chooses **Find more**. Changing
-defaults is an explicit mutation and may invoke PolicyKit only after the user
-chooses **Save defaults**.
+The full settings surface reads installed queues first so they appear without
+waiting for discovery, then merges the slower discovery result into the panel.
+Opening the panel and using normal refresh remain unprivileged; only **Find
+more** can invoke privileged discovery. Changing defaults is an explicit
+mutation and may invoke PolicyKit only after the user chooses **Save defaults**.
 
 ## Read path
 

@@ -35,6 +35,8 @@ Item {
   property bool controlPopupOpen: false
   property string selectedActionId: ""
   property bool backendTimedOut: false
+  property bool pendingSnapshotAfterQueues: false
+  property bool pendingSnapshotIncludesLegacy: false
   property bool busy: backend.running
 
   readonly property string pluginDir: {
@@ -189,10 +191,18 @@ Item {
   function refresh(includeLegacy) {
     if (busy) return
     selectedIdentity = rowIdentity()
+    pendingSnapshotAfterQueues = true
+    pendingSnapshotIncludesLegacy = includeLegacy === true
+    runBackend("queues", ["--json", "{}"], "")
+  }
+
+  function runPendingSnapshot() {
+    if (!pendingSnapshotAfterQueues || backend.running) return
+    pendingSnapshotAfterQueues = false
+    activeLegacyDiscovery = pendingSnapshotIncludesLegacy
+    pendingSnapshotIncludesLegacy = false
     var args = ["--timeout", "2"]
-    activeLegacyDiscovery = includeLegacy === true
-    if (activeLegacyDiscovery)
-      args.push("--include-legacy", "true")
+    if (activeLegacyDiscovery) args.push("--include-legacy", "true")
     runBackend("snapshot", args, "")
   }
 
@@ -217,6 +227,15 @@ Item {
 
   function handleSuccess(command, data) {
     failedIdentity = ""
+    if (command === "queues") {
+      var queues = data.queues || []
+      snapshot = {
+        queues: queues,
+        available: PrinterState.mergeAvailable(snapshot.available, [], queues)
+      }
+      if (viewName === "main") restoreCursor()
+      return
+    }
     if (command === "snapshot") {
       var currentAvailable = data.available || data.discovered || []
       if (activeLegacyDiscovery)
@@ -350,8 +369,8 @@ Item {
       statusMessage = friendlyError(activeCommand, response.error)
       return
     }
-    statusKind = activeCommand === "snapshot" ? "" : "success"
-    if (activeCommand === "snapshot") statusMessage = ""
+    statusKind = activeCommand === "snapshot" || activeCommand === "queues" ? "" : "success"
+    if (activeCommand === "snapshot" || activeCommand === "queues") statusMessage = ""
     handleSuccess(activeCommand, responseData(response))
   }
 
@@ -370,9 +389,10 @@ Item {
       if (exitCode !== 0 && backendOut.text.trim() === "") {
         root.statusKind = "error"
         root.statusMessage = "Printer service stopped unexpectedly"
-        return
+      } else {
+        root.handleBackendResult()
       }
-      root.handleBackendResult()
+      Qt.callLater(root.runPendingSnapshot)
     }
   }
 
@@ -636,7 +656,8 @@ Item {
 
         EmptyText {
           visible: root.snapshot.queues.length === 0
-          text: "No printers added"
+          text: root.busy && root.activeCommand === "queues"
+            ? "Checking installed printers…" : "No printers added"
         }
 
         ListView {
