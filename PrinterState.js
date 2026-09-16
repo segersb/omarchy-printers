@@ -124,6 +124,10 @@ function mergeAvailable(current, cached, queues) {
   return result
 }
 
+function scanResultCanInstall(device) {
+  return !!device && device.installed !== true
+}
+
 function quickOptions(options) {
   var preferred = [
     "pagesize", "media",
@@ -238,6 +242,7 @@ if (typeof module !== "undefined") {
     queueStateKind: queueStateKind,
     applyPresenceGrace: applyPresenceGrace,
     mergeAvailable: mergeAvailable,
+    scanResultCanInstall: scanResultCanInstall,
     quickOptions: quickOptions,
     humanizeIdentifier: humanizeIdentifier,
     optionLabel: optionLabel,

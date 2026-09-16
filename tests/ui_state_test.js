@@ -176,5 +176,7 @@ assert.deepEqual(state.mergeAvailable(
   [{ identity: "uri:socket://printer:9100", normalizedUri: "socket://printer:9100" }],
   [{ identity: "uuid:new-queue", normalizedUri: "socket://printer:9100" }]
 ), [])
+assert.equal(state.scanResultCanInstall({ installed: true }), false)
+assert.equal(state.scanResultCanInstall({ installed: false }), true)
 
 console.log("ui state tests passed")

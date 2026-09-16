@@ -155,6 +155,7 @@ Item {
       selectedIndex = 0
       selectedActionId = detailActions().length ? detailActions()[0] : ""
     } else {
+      if (!PrinterState.scanResultCanInstall(row)) return
       selectedDevice = row
       if (row.driverless) {
         runBackend("add", [
@@ -268,7 +269,7 @@ Item {
       return
     }
     if (command === "snapshot") {
-      var currentAvailable = data.available || data.discovered || []
+      var currentAvailable = data.scanResults || data.available || data.discovered || []
       snapshot = {
         queues: data.queues || [],
         available: currentAvailable
@@ -344,8 +345,13 @@ Item {
       statusMessage = "Printer added"
       snapshot = {
         queues: snapshot.queues,
-        available: snapshot.available.filter(function(device) {
-          return device.identity !== activeIdentity
+        available: snapshot.available.map(function(device) {
+          if (device.identity !== activeIdentity) return device
+          var installed = Object.assign({}, device)
+          installed.installed = true
+          installed.installedQueue = device.queueName || ""
+          delete installed.queueName
+          return installed
         })
       }
       viewName = "main"
@@ -717,11 +723,11 @@ Item {
         height: Math.max(0, main.height - y)
         spacing: Style.spacing.rowGap
 
-        SectionTitle { text: "Detected" }
+        SectionTitle { text: "Scan results" }
 
         EmptyText {
           visible: root.snapshot.available.length === 0
-          text: root.busy ? "Looking for printers…" : "No printers detected"
+          text: root.busy ? "Looking for printers…" : "No printers found"
         }
 
         ListView {
@@ -738,11 +744,17 @@ Item {
             required property int index
             width: ListView.view.width
             title: modelData.name
-            subtitle: modelData.driverless
-              ? (modelData.transportLabel || "Ready to add")
-              : ((modelData.transportLabel || "Printer") + " · Choose a driver")
+            subtitle: modelData.installed
+              ? (modelData.transportLabel || "Printer")
+              : (modelData.driverless
+                ? (modelData.transportLabel || "Ready to add")
+                : ((modelData.transportLabel || "Printer") + " · Choose a driver"))
             hasCursor: root.focusSection === "available" && root.selectedIndex === index
-            actionText: root.failedIdentity === modelData.identity ? "Retry" : "Add"
+            actionText: modelData.installed
+              ? "Installed"
+              : (root.failedIdentity === modelData.identity ? "Retry" : "Install")
+            actionItalic: modelData.installed === true
+            actionable: PrinterState.scanResultCanInstall(modelData)
             busy: root.busy && root.activeIdentity === modelData.identity
             failed: root.failedIdentity === modelData.identity
             onPointerMoved: function(item, mouse) {
@@ -1003,6 +1015,8 @@ Item {
     property string subtitle: ""
     property color statusColor: Color.muted
     property string actionText: ""
+    property bool actionItalic: false
+    property bool actionable: true
     property bool busy: false
     property bool failed: false
     signal activated()
@@ -1013,9 +1027,11 @@ Item {
 
     MouseArea {
       anchors.fill: parent
-      acceptedButtons: Qt.NoButton
       hoverEnabled: true
+      cursorShape: row.actionable && !row.busy
+        ? Qt.PointingHandCursor : Qt.ArrowCursor
       onPositionChanged: function(mouse) { row.pointerMoved(row, mouse) }
+      onClicked: if (row.actionable && !row.busy) row.activated()
     }
 
     RowLayout {
@@ -1046,11 +1062,14 @@ Item {
         }
       }
 
-      Button {
+      Text {
+        textFormat: Text.PlainText
         text: row.actionText
-        hasCursor: row.hasCursor
-        enabled: !row.busy
-        onClicked: row.activated()
+        color: row.actionable ? root.foreground : Color.muted
+        font.family: Style.font.family
+        font.pixelSize: Style.font.body
+        font.italic: row.actionItalic
+        Layout.alignment: Qt.AlignVCenter
       }
     }
   }

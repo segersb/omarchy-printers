@@ -664,13 +664,35 @@ class PrinterBackend:
             queue["online"] = True if found else (
                 False if include_legacy and not warning else None
             )
-        available = filter_installed(discovered, queues)
         existing = [queue["name"] for queue in queues]
         reserved = list(existing)
-        for device in available:
-            device["queueName"] = unique_queue_name(_text(device["name"]), reserved)
-            reserved.append(device["queueName"])
-        result = {"default": default, "queues": queues, "available": available}
+        available = []
+        scan_results = []
+        for discovered_device in discovered:
+            device = dict(discovered_device)
+            installed_queue = next(
+                (
+                    queue
+                    for queue in queues
+                    if device_matches_queue(device, queue)
+                ),
+                None,
+            )
+            if installed_queue:
+                device["installed"] = True
+                device["installedQueue"] = _text(installed_queue.get("name"))
+            else:
+                device["installed"] = False
+                device["queueName"] = unique_queue_name(_text(device["name"]), reserved)
+                reserved.append(device["queueName"])
+                available.append(device)
+            scan_results.append(device)
+        result = {
+            "default": default,
+            "queues": queues,
+            "available": available,
+            "scanResults": scan_results,
+        }
         if warning:
             result["warning"] = warning
         return result

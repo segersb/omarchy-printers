@@ -432,6 +432,20 @@ class OperationsTests(unittest.TestCase):
             data = self.backend.snapshot({})
         self.assertTrue(data["queues"][0]["online"])
         self.assertEqual(data["available"], [])
+        self.assertEqual(len(data["scanResults"]), 1)
+        self.assertTrue(data["scanResults"][0]["installed"])
+        self.assertEqual(data["scanResults"][0]["installedQueue"], "Office")
+
+    def test_snapshot_marks_new_scan_results_installable(self):
+        discovered = {
+            "device-uri": "ipps://Lobby._ipps._tcp.local/",
+            "device-info": "Lobby",
+        }
+        with patch.object(printers, "discover_driverless", return_value=[discovered]):
+            data = self.backend.snapshot({})
+        self.assertFalse(data["scanResults"][0]["installed"])
+        self.assertEqual(data["scanResults"][0]["queueName"], "Lobby")
+        self.assertEqual(data["scanResults"], data["available"])
 
     def test_normal_snapshot_does_not_call_privileged_discovery(self):
         with patch.object(printers, "discover_driverless", return_value=[]):

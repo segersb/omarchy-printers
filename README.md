@@ -66,7 +66,9 @@ omarchy-shell shell summon segersb.omarchy-printers '{}'
 
 The full panel opens with installed printers only and never scans
 automatically or periodically. Choose **Network scan** or **Full scan** to show
-a **Detected** section containing that scan's current results.
+a **Scan results** section containing that scan's current results. Printers
+already configured in CUPS remain visible there as **Installed**; new printers
+can be installed by selecting their entire row.
 
 To add it to the Omarchy menu, merge
 [`docs/omarchy-menu.jsonc`](docs/omarchy-menu.jsonc) into:
