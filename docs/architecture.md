@@ -21,10 +21,10 @@ administration. The quick popup deliberately excludes add/remove, pause,
 legacy discovery, and test-page actions.
 
 The quick widget reads installed queues once when its bar instance starts,
-then serves popup opens entirely from memory. Its refresh button and successful
-mutations in the full panel trigger another lightweight CUPS queue read; they
-do not run device discovery. Status labels reflect CUPS queue state—Ready,
-Printing, Paused, or Needs attention—rather than network rediscovery.
+then serves popup opens entirely from memory. Successful mutations in the full
+panel trigger another lightweight CUPS queue read; they do not run device
+discovery. Status labels reflect CUPS queue state—Ready, Printing, Paused, or
+Needs attention—rather than network rediscovery.
 
 The full settings surface reads installed queues first so they appear without
 waiting for discovery, then merges the slower discovery result into the panel.

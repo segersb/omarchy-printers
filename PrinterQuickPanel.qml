@@ -380,16 +380,13 @@ Panel {
       onActivateRequested: root.activateCursor()
       onCloseRequested: root.close()
       onTabRequested: function(direction) { root.moveCursor(direction) }
-      onTextKey: function(text) {
-        if (text === "r" || text === "R") root.refresh()
-      }
 
       Item {
         id: header
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
-        implicitHeight: Math.max(heroIcon.implicitHeight, heroLabels.implicitHeight, refreshButton.implicitHeight)
+        implicitHeight: Math.max(heroIcon.implicitHeight, heroLabels.implicitHeight)
         height: implicitHeight
 
         Text {
@@ -406,8 +403,7 @@ Panel {
           id: heroLabels
           anchors.left: heroIcon.right
           anchors.leftMargin: Style.space(14)
-          anchors.right: refreshButton.left
-          anchors.rightMargin: Style.space(12)
+          anchors.right: parent.right
           anchors.verticalCenter: parent.verticalCenter
           spacing: Style.space(2)
 
@@ -433,17 +429,6 @@ Panel {
             font.letterSpacing: 1.2
             elide: Text.ElideRight
           }
-        }
-
-        PanelActionButton {
-          id: refreshButton
-          anchors.right: parent.right
-          anchors.verticalCenter: parent.verticalCenter
-          iconText: "󰑐"
-          tooltipText: "Refresh"
-          foreground: root.bar.foreground
-          enabled: !root.busy
-          onClicked: root.refresh(true)
         }
       }
 
