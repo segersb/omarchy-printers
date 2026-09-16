@@ -423,7 +423,7 @@ Panel {
         anchors.right: parent.right
         anchors.top: headerSeparator.bottom
         anchors.bottom: footerSeparator.top
-        anchors.topMargin: Style.space(14)
+        anchors.topMargin: Style.space(10)
         anchors.bottomMargin: Style.space(14)
         contentWidth: width
         contentHeight: content.implicitHeight
@@ -440,13 +440,7 @@ Panel {
 
           Column {
             width: parent.width
-            spacing: Style.space(10)
-
-            PanelSectionHeader {
-              text: "PRINTERS"
-              foreground: root.bar.foreground
-              fontFamily: root.bar.fontFamily
-            }
+            spacing: Style.space(6)
 
             Repeater {
               id: queueRepeater
