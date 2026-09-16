@@ -23,8 +23,7 @@ Item {
   property var models: []
   property var options: []
   property var optionValues: ({})
-  property var lastSeenByIdentity: ({})
-  property var legacyAvailable: []
+  property bool scanVisible: false
   property bool activeLegacyDiscovery: false
   property string selectedModelId: ""
   property string statusMessage: ""
@@ -60,9 +59,25 @@ Item {
   function open(payloadJson) {
     closingFromHost = false
     window.visible = true
+    snapshot = {
+      queues: queuesWithoutPresence(snapshot.queues),
+      available: []
+    }
+    scanVisible = false
+    statusMessage = ""
     viewName = "main"
-    refresh()
+    restoreCursor()
+    loadQueues()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function queuesWithoutPresence(queues) {
+    return (queues || []).map(function(queue) {
+      var copy = Object.assign({}, queue)
+      delete copy.online
+      delete copy.presenceStale
+      return copy
+    })
   }
 
   function close() {
@@ -190,9 +205,23 @@ Item {
     return actions
   }
 
-  function refresh(includeLegacy) {
+  function loadQueues() {
     if (busy) return
     selectedIdentity = rowIdentity()
+    activeLegacyDiscovery = false
+    pendingSnapshotAfterQueues = false
+    pendingSnapshotIncludesLegacy = false
+    runBackend("queues", ["--json", "{}"], "")
+  }
+
+  function scan(includeLegacy) {
+    if (busy) return
+    selectedIdentity = rowIdentity()
+    snapshot = {
+      queues: queuesWithoutPresence(snapshot.queues),
+      available: []
+    }
+    scanVisible = true
     pendingSnapshotAfterQueues = true
     pendingSnapshotIncludesLegacy = includeLegacy === true
     runBackend("queues", ["--json", "{}"], "")
@@ -240,18 +269,9 @@ Item {
     }
     if (command === "snapshot") {
       var currentAvailable = data.available || data.discovered || []
-      if (activeLegacyDiscovery)
-        legacyAvailable = currentAvailable.filter(function(device) {
-          return !device.driverless
-        })
-      var presence = PrinterState.applyPresenceGrace(
-        data.queues || [], lastSeenByIdentity, Date.now(), 45000)
-      lastSeenByIdentity = presence.lastSeen
       snapshot = {
-        queues: presence.queues,
-        available: activeLegacyDiscovery
-          ? currentAvailable
-          : PrinterState.mergeAvailable(currentAvailable, legacyAvailable, presence.queues)
+        queues: data.queues || [],
+        available: currentAvailable
       }
       if (data.warning) {
         statusKind = ""
@@ -322,9 +342,6 @@ Item {
     }
     if (command === "add") {
       statusMessage = "Printer added"
-      legacyAvailable = legacyAvailable.filter(function(device) {
-        return device.identity !== activeIdentity
-      })
       snapshot = {
         queues: snapshot.queues,
         available: snapshot.available.filter(function(device) {
@@ -413,7 +430,7 @@ Item {
   Timer {
     id: refreshAfterAction
     interval: 350
-    onTriggered: root.refresh()
+    onTriggered: root.loadQueues()
   }
 
   Timer {
@@ -422,13 +439,6 @@ Item {
     onTriggered: Quickshell.execDetached([
       "omarchy-shell", "segersb.omarchy-printers.quick", "refresh"
     ])
-  }
-
-  Timer {
-    interval: 30000
-    repeat: true
-    running: window.visible && root.viewName === "main"
-    onTriggered: root.refresh()
   }
 
   PointerMoveGate {
@@ -513,8 +523,8 @@ Item {
         }
       }
       onTextKey: function(text) {
-        if (text === "r" && root.viewName === "main") root.refresh()
-        else if (text === "f" && root.viewName === "main") root.refresh(true)
+        if (text === "r" && root.viewName === "main") root.scan()
+        else if (text === "f" && root.viewName === "main") root.scan(true)
       }
 
       ColumnLayout {
@@ -554,7 +564,7 @@ Item {
             iconText: "󰌗"
             tooltipText: "Find driverless network printers"
             enabled: !root.busy
-            onClicked: root.refresh()
+            onClicked: root.scan()
           }
 
           Button {
@@ -563,7 +573,7 @@ Item {
             iconText: "󰐷"
             tooltipText: "Find all printers · May require authentication"
             enabled: !root.busy
-            onClicked: root.refresh(true)
+            onClicked: root.scan(true)
           }
         }
 
@@ -702,15 +712,16 @@ Item {
       }
 
       Column {
+        visible: root.scanVisible
         width: parent.width
         height: Math.max(0, main.height - y)
         spacing: Style.spacing.rowGap
 
-        SectionTitle { text: "Available" }
+        SectionTitle { text: "Detected" }
 
         EmptyText {
           visible: root.snapshot.available.length === 0
-          text: root.busy ? "Looking for printers…" : "No printers available"
+          text: root.busy ? "Looking for printers…" : "No printers detected"
         }
 
         ListView {

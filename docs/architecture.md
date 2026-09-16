@@ -26,11 +26,12 @@ panel trigger another lightweight CUPS queue read; they do not run device
 discovery. Status labels reflect CUPS queue state—Ready, Printing, Paused, or
 Needs attention—rather than network rediscovery.
 
-The full settings surface reads installed queues first so they appear without
-waiting for discovery, then merges the slower discovery result into the panel.
-Opening the panel and using **Network scan** remain unprivileged; only **Full
-scan** can invoke privileged discovery. Changing defaults is an explicit
-mutation and may invoke PolicyKit only after the user chooses **Save defaults**.
+The full settings surface opens with only a fast installed-queue read. It does
+not run discovery on open or periodically. **Detected** appears only after the
+user explicitly starts **Network scan** or **Full scan**, and each scan shows
+only its own current results. Network scan remains unprivileged; only Full scan
+can invoke privileged discovery. Changing defaults is an explicit mutation and
+may invoke PolicyKit only after the user chooses **Save defaults**.
 
 ## Read path
 
@@ -61,11 +62,11 @@ Identity is independent of a user-visible queue name:
 3. DNS-SD service identity with IPP/IPPS normalized together.
 4. Normalized device URI as a final fallback.
 
-This identity drives Installed/Available filtering and cursor preservation.
+This identity drives Installed/Detected filtering and cursor preservation.
 When CUPS exposes an installed queue only by host URI while discovery exposes
 only its DNS-SD service, an exact normalized queue/service name is used as a
 final association fallback. A matched discovery record is removed from
-Available and shown as **Seen on network** on the installed queue. CUPS queue
+Detected and shown as **Seen on network** on the installed queue. CUPS queue
 state and recent discovery presence remain separate so a paused queue is not
 reported as offline.
 

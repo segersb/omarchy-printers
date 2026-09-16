@@ -64,6 +64,10 @@ The full settings panel can also be opened directly:
 omarchy-shell shell summon segersb.omarchy-printers '{}'
 ```
 
+The full panel opens with installed printers only and never scans
+automatically or periodically. Choose **Network scan** or **Full scan** to show
+a **Detected** section containing that scan's current results.
+
 To add it to the Omarchy menu, merge
 [`docs/omarchy-menu.jsonc`](docs/omarchy-menu.jsonc) into:
 
