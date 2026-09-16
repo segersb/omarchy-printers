@@ -138,11 +138,11 @@ assert.equal(state.optionsDirty(
 ), true)
 assert.equal(state.printerSummary([
   { enabled: true, online: true }
-]), "1 printer · Online")
+]), "1 printer")
 assert.equal(state.printerSummary([
   { enabled: true, online: true },
   { enabled: false, online: true }
-]), "2 printers · 1 needs attention")
+]), "2 printers")
 
 assert.deepEqual(state.mergeAvailable(
   [],

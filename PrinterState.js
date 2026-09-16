@@ -202,17 +202,8 @@ function optionsDirty(options, values) {
 function printerSummary(queues) {
   var items = queues || []
   if (items.length === 0) return "No printers added"
-  var problems = items.filter(function(queue) {
-    return !queue.enabled || queue.online === false
-  }).length
   var noun = items.length === 1 ? "printer" : "printers"
-  if (problems > 0)
-    return items.length + " " + noun + " · " + problems
-      + (problems === 1 ? " needs attention" : " need attention")
-  var unknown = items.some(function(queue) {
-    return queue.online === null || queue.online === undefined
-  })
-  return items.length + " " + noun + " · " + (unknown ? "Status unavailable" : "Online")
+  return items.length + " " + noun
 }
 
 if (typeof module !== "undefined") {

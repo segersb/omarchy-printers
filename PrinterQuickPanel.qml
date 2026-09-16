@@ -47,10 +47,6 @@ Panel {
   readonly property bool hasProblem: snapshot.queues.some(function(queue) {
     return !queue.enabled || queue.online === false
   })
-  readonly property bool allHealthy: snapshot.queues.length > 0
-    && snapshot.queues.every(function(queue) {
-      return queue.enabled && queue.online === true
-    })
   readonly property string icon: "󰐪"
 
   readonly property string pluginDir: {
@@ -385,9 +381,7 @@ Panel {
             text: root.busy && root.snapshot.queues.length === 0
               ? "CHECKING PRINTERS"
               : PrinterState.printerSummary(root.snapshot.queues).toUpperCase()
-            color: root.allHealthy
-              ? Color.flatColor("green", root.bar.foreground)
-              : Color.muted
+            color: Color.muted
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.caption
             font.bold: true
