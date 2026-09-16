@@ -61,6 +61,8 @@ Panel {
   }
   readonly property string backendPath: pluginDir + "/backend/printers.py"
 
+  Component.onCompleted: Qt.callLater(function() { root.refresh(false) })
+
   onOpenedChanged: {
     if (opened) {
       cursorActive = false
@@ -80,7 +82,7 @@ Panel {
     if (invalidateOptions === true) optionCache = ({})
     pendingRefresh = false
     pendingRefreshInvalidatesOptions = false
-    runBackend("queues", [])
+    runBackend("queues", ["--json", "{}"])
   }
 
   function runPendingRefresh() {
@@ -788,7 +790,6 @@ Panel {
         root.expandQueue(index)
     }
 
-    Component.onCompleted: Qt.callLater(function() { root.refresh(false) })
   }
 
   Timer {
