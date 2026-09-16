@@ -758,6 +758,16 @@ class PrinterBackend:
             raise BackendError("invalid-request", "queue must be a string.", 2)
         return {"jobs": self.cups.jobs(queue)}
 
+    def manage(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        queue = required_string(request, "queue")
+        options = self.options({"queue": queue})
+        return {
+            "queue": queue,
+            "options": options.get("options", []),
+            "defaults": options.get("defaults", {}),
+            "jobs": self.jobs({"queue": queue})["jobs"],
+        }
+
     def cancel_job(self, request: Mapping[str, Any]) -> dict[str, Any]:
         job_id = required_int(request, "jobId", minimum=1)
         purge = request.get("purge", False)
@@ -837,6 +847,7 @@ COMMANDS = {
     "remove": "remove",
     "set-default": "set_default",
     "set-enabled": "set_enabled",
+    "manage": "manage",
     "jobs": "jobs",
     "cancel-job": "cancel_job",
     "options": "options",
@@ -948,7 +959,7 @@ def build_parser() -> argparse.ArgumentParser:
     add.add_argument("--info")
     add.add_argument("--location")
 
-    for command in ("remove", "set-default", "options", "test-page"):
+    for command in ("remove", "set-default", "manage", "options", "test-page"):
         command_parser(command).add_argument("--queue")
 
     enabled = command_parser("set-enabled")

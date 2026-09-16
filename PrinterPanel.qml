@@ -23,6 +23,7 @@ Item {
   property var models: []
   property var options: []
   property var optionValues: ({})
+  property var submittedOptionValues: ({})
   property bool scanVisible: false
   property bool activeLegacyDiscovery: false
   property string selectedModelId: ""
@@ -32,7 +33,6 @@ Item {
   property string activeCommand: ""
   property string activeIdentity: ""
   property bool controlPopupOpen: false
-  property string selectedActionId: ""
   property bool backendTimedOut: false
   property bool pendingSnapshotAfterQueues: false
   property bool pendingSnapshotIncludesLegacy: false
@@ -40,6 +40,9 @@ Item {
   property bool busy: backend.running
   readonly property bool fullScanActive: pendingSnapshotAfterQueues
     ? pendingSnapshotIncludesLegacy : activeLegacyDiscovery
+  readonly property var managementOptions: PrinterState.quickOptions(options)
+  readonly property bool managementDirty: PrinterState.optionsDirty(
+    managementOptions, optionValues)
 
   readonly property string pluginDir: {
     var path = Qt.resolvedUrl(".").toString()
@@ -91,16 +94,8 @@ Item {
     if (viewName !== "main") {
       controlPopupOpen = false
       statusMessage = ""
-      if ((viewName === "jobs" || viewName === "options") && selectedQueue) {
-        var parentAction = viewName
-        viewName = "details"
-        var actions = detailActions()
-        selectedIndex = Math.max(0, actions.indexOf(parentAction))
-        selectedActionId = actions[selectedIndex]
-      } else {
-        viewName = "main"
-        restoreCursor()
-      }
+      viewName = "main"
+      restoreCursor()
       Qt.callLater(function() { keyCatcher.forceActiveFocus() })
       return
     }
@@ -113,10 +108,8 @@ Item {
   function keyboardHint() {
     if (viewName === "main")
       return "j/k or arrows navigate · enter select · r network scan · f full scan · esc close"
-    if (viewName === "jobs")
-      return "j/k or arrows navigate · enter cancel job · esc back"
-    if (viewName === "options")
-      return "j/k or arrows navigate · enter change · esc back"
+    if (viewName === "details")
+      return "j/k or arrows navigate · enter activate · esc back"
     return "j/k or arrows navigate · enter select · esc back"
   }
 
@@ -162,9 +155,12 @@ Item {
     if (!row || busy) return
     if (focusSection === "installed") {
       selectedQueue = row
+      jobs = []
+      options = []
+      optionValues = ({})
       viewName = "details"
       selectedIndex = 0
-      selectedActionId = detailActions().length ? detailActions()[0] : ""
+      runBackend("manage", ["--queue", selectedQueue.name], selectedQueue.identity)
     } else {
       if (!PrinterState.scanResultCanInstall(row)) return
       selectedDevice = row
@@ -188,10 +184,9 @@ Item {
 
   function activateDetails() {
     if (!selectedQueue) return
-    var actions = detailActions()
-    if (selectedIndex < 0 || selectedIndex >= actions.length) return
-    var action = actions[selectedIndex]
-    selectedActionId = action
+    if (selectedIndex < 0) return
+    var actions = managementActions()
+    var action = selectedIndex < actions.length ? actions[selectedIndex] : ""
     if (action === "default")
       runBackend("set-default", ["--queue", selectedQueue.name], selectedQueue.identity)
     else if (action === "enabled") {
@@ -201,25 +196,62 @@ Item {
         "--enabled", pendingQueueEnabled ? "true" : "false"
       ], selectedQueue.identity)
     }
-    else if (action === "jobs")
-      runBackend("jobs", ["--queue", selectedQueue.name], selectedQueue.identity)
-    else if (action === "options")
-      runBackend("options", ["--queue", selectedQueue.name], selectedQueue.identity)
     else if (action === "test")
       runBackend("test-page", ["--queue", selectedQueue.name], selectedQueue.identity)
     else if (action === "remove") {
       confirmDialog.message = "Remove " + selectedQueue.name + "?"
       confirmDialog.selectedIndex = 0
       confirmDialog.opened = true
+    } else if (selectedIndex < managementSaveIndex()) {
+      var optionItem = managementView.optionItem(
+        selectedIndex - managementOptionOffset())
+      if (optionItem) optionItem.toggle()
+    } else if (managementDirty && selectedIndex === managementSaveIndex()) {
+      saveManagementOptions()
+    } else {
+      var jobIndex = selectedIndex - managementJobsOffset()
+      if (jobIndex >= 0 && jobIndex < jobs.length)
+        runBackend("cancel-job", ["--job-id", String(jobs[jobIndex].id)],
+          selectedQueue.identity)
     }
   }
 
-  function detailActions() {
+  function managementActions() {
     if (!selectedQueue) return []
     var actions = []
     if (!selectedQueue.isDefault) actions.push("default")
-    actions.push("enabled", "jobs", "options", "test", "remove")
+    actions.push("enabled", "test", "remove")
     return actions
+  }
+
+  function managementOptionOffset() {
+    return managementActions().length
+  }
+
+  function managementSaveIndex() {
+    return managementOptionOffset() + managementOptions.length
+  }
+
+  function managementJobsOffset() {
+    return managementSaveIndex() + (managementDirty ? 1 : 0)
+  }
+
+  function managementTargetCount() {
+    return managementJobsOffset() + jobs.length
+  }
+
+  function saveManagementOptions() {
+    if (!selectedQueue || !managementDirty || busy) return
+    var values = {}
+    for (var i = 0; i < managementOptions.length; i++) {
+      var option = managementOptions[i]
+      values[option.name] = optionValues[option.name]
+    }
+    submittedOptionValues = Object.assign({}, values)
+    runBackend("set-options", [
+      "--queue", selectedQueue.name,
+      "--options", JSON.stringify(values)
+    ], selectedQueue.identity)
   }
 
   function loadQueues() {
@@ -311,11 +343,6 @@ Item {
       updateSelectedQueue()
       if (viewName === "main") {
         restoreCursor()
-      } else if (viewName === "details") {
-        var actions = detailActions()
-        var actionIndex = actions.indexOf(selectedActionId)
-        selectedIndex = actionIndex >= 0 ? actionIndex : Math.max(0, Math.min(selectedIndex, actions.length - 1))
-        selectedActionId = actions.length ? actions[selectedIndex] : ""
       }
       return
     }
@@ -337,27 +364,22 @@ Item {
       selectedIndex = 0
       return
     }
-    if (command === "jobs") {
-      if (!selectedQueue) return
-      jobs = data.jobs || []
-      viewName = "jobs"
-      selectedIndex = jobs.length ? 0 : -1
-      return
-    }
-    if (command === "options") {
+    if (command === "manage") {
       if (!selectedQueue) return
       options = data.options || []
       var values = {}
       for (var i = 0; i < options.length; i++)
         values[options[i].name] = options[i].default
       optionValues = values
-      viewName = "options"
-      selectedIndex = 0
+      jobs = data.jobs || []
+      selectedIndex = Math.max(-1, Math.min(
+        selectedIndex, managementTargetCount() - 1))
       return
     }
     if (command === "cancel-job") {
       if (!selectedQueue) return
-      runBackend("jobs", ["--queue", selectedQueue.name], selectedQueue.identity)
+      statusMessage = "Print job cancelled"
+      managementReload.restart()
       return
     }
     if (command === "add") {
@@ -388,10 +410,21 @@ Item {
       selectedQueue = updated
       statusMessage = pendingQueueEnabled ? "Printer resumed" : "Printer paused"
     } else if (command === "test-page") statusMessage = "Test page sent"
-    else if (command === "set-options") statusMessage = "Defaults saved"
+    else if (command === "set-options") {
+      options = options.map(function(option) {
+        var updatedOption = Object.assign({}, option)
+        updatedOption.default = submittedOptionValues[option.name]
+        return updatedOption
+      })
+      optionValues = Object.assign({}, submittedOptionValues)
+      selectedIndex = Math.max(-1, Math.min(
+        selectedIndex, managementTargetCount() - 1))
+      statusMessage = "Defaults saved"
+    }
     if (["add", "remove", "set-default", "set-enabled", "set-options"].indexOf(command) >= 0)
       quickRefreshAfterAction.restart()
-    refreshAfterAction.restart()
+    if (["add", "remove", "set-default", "set-enabled"].indexOf(command) >= 0)
+      refreshAfterAction.restart()
   }
 
   function friendlyError(command, error) {
@@ -472,6 +505,20 @@ Item {
     ])
   }
 
+  Timer {
+    id: managementReload
+    interval: 50
+    onTriggered: {
+      if (backend.running) {
+        restart()
+        return
+      }
+      if (root.selectedQueue && root.viewName === "details")
+        root.runBackend("manage", ["--queue", root.selectedQueue.name],
+          root.selectedQueue.identity)
+    }
+  }
+
   PointerMoveGate {
     id: pointerGate
     referenceItem: window.contentItem
@@ -504,19 +551,13 @@ Item {
         pointerGate.reset()
         if (root.viewName === "main") root.moveCursor(dy)
         else {
-          var count = root.viewName === "details" ? root.detailActions().length
-            : (root.viewName === "jobs" ? root.jobs.length
-              : (root.viewName === "models" ? 2
-                : (root.viewName === "options" ? root.options.length + 1 : 0)))
+          var count = root.viewName === "details"
+            ? root.managementTargetCount()
+            : (root.viewName === "models" ? 2 : 0)
           if (count > 0) {
             root.selectedIndex = Math.max(-1, Math.min(count - 1, root.selectedIndex + dy))
             if (root.viewName === "details")
-              root.selectedActionId = root.selectedIndex >= 0
-                ? root.detailActions()[root.selectedIndex] : ""
-            else if (root.viewName === "jobs")
-              Qt.callLater(function() { jobsView.ensureCursorVisible() })
-            else if (root.viewName === "options")
-              Qt.callLater(function() { optionsView.ensureCursorVisible() })
+              Qt.callLater(function() { managementView.ensureCursorVisible() })
           } else root.selectedIndex = -1
         }
       }
@@ -530,10 +571,7 @@ Item {
           root.requestClose()
         else if (root.viewName === "main") root.activateMainRow()
         else if (root.viewName === "details") root.activateDetails()
-        else if (root.viewName === "jobs" && root.selectedQueue && root.selectedIndex >= 0)
-          root.runBackend("cancel-job", ["--job-id", String(root.jobs[root.selectedIndex].id)], root.selectedQueue.identity)
         else if (root.viewName === "models") modelsView.activate(root.selectedIndex)
-        else if (root.viewName === "options") optionsView.activate(root.selectedIndex)
       }
       onCloseRequested: {
         if (confirmDialog.opened) confirmDialog.canceled()
@@ -544,9 +582,10 @@ Item {
           confirmDialog.selectedIndex = confirmDialog.selectedIndex === 0 ? 1 : 0
         else if (root.viewName === "models")
           root.selectedIndex = Math.max(-1, Math.min(1, root.selectedIndex + direction))
-        else if (root.viewName === "options") {
-          root.selectedIndex = Math.max(-1, Math.min(root.options.length, root.selectedIndex + direction))
-          Qt.callLater(function() { optionsView.ensureCursorVisible() })
+        else if (root.viewName === "details") {
+          root.selectedIndex = Math.max(-1, Math.min(
+            root.managementTargetCount() - 1, root.selectedIndex + direction))
+          Qt.callLater(function() { managementView.ensureCursorVisible() })
         }
       }
       onDeleteRequested: {
@@ -584,8 +623,6 @@ Item {
             text: {
               if (root.viewName === "details" && root.selectedQueue) return root.selectedQueue.name
               if (root.viewName === "models") return "Choose a driver"
-              if (root.viewName === "jobs") return "Print jobs"
-              if (root.viewName === "options") return "Printer defaults"
               return "Printers"
             }
             color: root.foreground
@@ -625,6 +662,7 @@ Item {
         }
 
         DetailsView {
+          id: managementView
           visible: root.viewName === "details"
           Layout.fillWidth: true
           Layout.fillHeight: true
@@ -633,20 +671,6 @@ Item {
         ModelsView {
           id: modelsView
           visible: root.viewName === "models"
-          Layout.fillWidth: true
-          Layout.fillHeight: true
-        }
-
-        JobsView {
-          id: jobsView
-          visible: root.viewName === "jobs"
-          Layout.fillWidth: true
-          Layout.fillHeight: true
-        }
-
-        OptionsView {
-          id: optionsView
-          visible: root.viewName === "options"
           Layout.fillWidth: true
           Layout.fillHeight: true
         }
@@ -806,11 +830,65 @@ Item {
 
   component DetailsView: Item {
     id: details
-    readonly property var actions: root.detailActions()
+    readonly property var actions: root.managementActions()
+    readonly property var routineActions: actions.filter(function(action) {
+      return action !== "remove"
+    })
+
+    function actionLabel(action) {
+      if (action === "default")
+        return root.busy && root.activeCommand === "set-default"
+          ? "Setting…" : "Make default"
+      if (action === "enabled") {
+        if (root.busy && root.activeCommand === "set-enabled")
+          return root.pendingQueueEnabled ? "Resuming…" : "Pausing…"
+        return root.selectedQueue && root.selectedQueue.enabled ? "Pause" : "Resume"
+      }
+      if (action === "test")
+        return root.busy && root.activeCommand === "test-page"
+          ? "Sending…" : "Test page"
+      return "Remove"
+    }
+
+    function actionIcon(action) {
+      if (action === "default") return "󰓎"
+      if (action === "enabled")
+        return root.selectedQueue && root.selectedQueue.enabled ? "󰏤" : "󰐊"
+      if (action === "test") return "󰐪"
+      return "󰆴"
+    }
+
+    function optionItem(index) {
+      return settingsRepeater.itemAt(index)
+    }
+
+    function targetItem(index) {
+      if (index < routineActions.length) return actionRepeater.itemAt(index)
+      if (index === actions.length - 1) return removeAction
+      if (index < root.managementSaveIndex())
+        return settingsRepeater.itemAt(index - root.managementOptionOffset())
+      if (root.managementDirty && index === root.managementSaveIndex())
+        return saveDefaults
+      return jobsRepeater.itemAt(index - root.managementJobsOffset())
+    }
+
+    function ensureCursorVisible() {
+      if (root.selectedIndex < root.managementOptionOffset()) return
+      var item = targetItem(root.selectedIndex)
+      var flickable = dashboardScroll.contentItem
+      if (!item || !flickable) return
+      var point = item.mapToItem(dashboardContent, 0, 0)
+      var top = point.y
+      var bottom = top + item.height
+      if (top < flickable.contentY)
+        flickable.contentY = Math.max(0, top)
+      else if (bottom > flickable.contentY + dashboardScroll.availableHeight)
+        flickable.contentY = bottom - dashboardScroll.availableHeight
+    }
 
     ColumnLayout {
       anchors.fill: parent
-      spacing: Style.spacing.rowGap
+      spacing: Style.spacing.panelGap
 
       Text {
         text: root.selectedQueue ? PrinterState.queueStatus(root.selectedQueue) : ""
@@ -824,57 +902,172 @@ Item {
         font.pixelSize: Style.font.body
       }
 
-      Repeater {
-        model: details.actions
-        delegate: ActionRow {
-          required property string modelData
-          required property int index
-          Layout.fillWidth: true
-          hasCursor: root.selectedIndex === index
-          urgentAction: modelData === "remove"
-          title: {
-            if (modelData === "default") return "Make default"
-            if (modelData === "enabled") return root.selectedQueue && root.selectedQueue.enabled ? "Pause printer" : "Resume printer"
-            if (modelData === "jobs") return "Print jobs"
-            if (modelData === "options") return "Printer defaults"
-            if (modelData === "test") return "Print test page"
-            return "Remove printer"
-          }
-          description: {
-            if (modelData === "default") return "Use this printer unless another is selected"
-            if (modelData === "enabled") {
-              if (root.busy && root.activeCommand === "set-enabled")
-                return root.pendingQueueEnabled ? "Starting this queue…" : "Stopping this queue…"
-              return "Temporarily stop or resume this queue"
+      RowLayout {
+        Layout.fillWidth: true
+        spacing: Style.spacing.controlGap
+
+        Repeater {
+          id: actionRepeater
+          model: details.routineActions
+          delegate: Button {
+            required property string modelData
+            required property int index
+            text: details.actionLabel(modelData)
+            iconText: details.actionIcon(modelData)
+            hasCursor: root.selectedIndex === index
+            enabled: !root.busy
+            onHovered: function(on) {
+              if (on) root.selectedIndex = index
             }
-            if (modelData === "jobs") return "View and cancel queued jobs"
-            if (modelData === "options") return "Paper, duplex, quality, and other defaults"
-            if (modelData === "test") return "Send the standard CUPS test page"
-            return "Delete this printer queue"
+            onClicked: {
+              root.selectedIndex = index
+              root.activateDetails()
+            }
           }
-          actionText: modelData === "enabled"
-            ? (root.busy && root.activeCommand === "set-enabled"
-              ? (root.pendingQueueEnabled ? "Resuming…" : "Pausing…")
-              : (root.selectedQueue && root.selectedQueue.enabled ? "Pause" : "Resume"))
-            : (modelData === "default"
-              ? (root.busy && root.activeCommand === "set-default" ? "Setting…" : "Set default")
-              : (modelData === "test"
-                ? (root.busy && root.activeCommand === "test-page" ? "Sending…" : "Print")
-                : (modelData === "remove" ? "Remove" : "")))
+        }
+
+        Item { Layout.fillWidth: true }
+
+        Button {
+          id: removeAction
+          text: "Remove"
+          iconText: details.actionIcon("remove")
+          foreground: root.urgent
+          hasCursor: root.selectedIndex === details.actions.length - 1
           enabled: !root.busy
-          onPointerMoved: function(item, mouse) {
-            if (!pointerGate.moved(item, mouse)) return
-            root.selectedIndex = index
-            root.selectedActionId = modelData
+          onHovered: function(on) {
+            if (on) root.selectedIndex = details.actions.length - 1
           }
-          onActivated: {
-            root.selectedIndex = index
+          onClicked: {
+            root.selectedIndex = details.actions.length - 1
             root.activateDetails()
           }
         }
       }
 
-      Item { Layout.fillHeight: true }
+      PanelSeparator { Layout.fillWidth: true }
+
+      ScrollView {
+        id: dashboardScroll
+        Layout.fillWidth: true
+        Layout.fillHeight: true
+        clip: true
+        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+        Column {
+          id: dashboardContent
+          width: dashboardScroll.availableWidth
+          spacing: Style.spacing.panelGap
+
+          SectionTitle { text: "Printer settings" }
+
+          EmptyText {
+            visible: root.managementOptions.length === 0
+            text: root.busy && root.activeCommand === "manage"
+              ? "Loading printer settings…" : "No printer settings available"
+          }
+
+          Repeater {
+            id: settingsRepeater
+            model: root.managementOptions
+            delegate: Item {
+              id: settingRow
+              required property var modelData
+              required property int index
+              width: dashboardContent.width
+              height: settingDropdown.implicitHeight
+
+              function toggle() { settingDropdown.toggle() }
+
+              Text {
+                anchors.left: parent.left
+                anchors.right: settingDropdown.left
+                anchors.rightMargin: Style.spacing.rowGap
+                anchors.verticalCenter: parent.verticalCenter
+                text: PrinterState.optionLabel(settingRow.modelData)
+                color: root.foreground
+                font.family: Style.font.family
+                font.pixelSize: Style.font.body
+                elide: Text.ElideRight
+              }
+
+              Dropdown {
+                id: settingDropdown
+                width: parent.width * 0.55
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                showLabel: false
+                enabled: !root.busy
+                hasCursor: root.selectedIndex
+                  === root.managementOptionOffset() + settingRow.index
+                value: String(root.optionValues[settingRow.modelData.name] || "")
+                options: PrinterState.optionChoices(settingRow.modelData)
+                onHovered: function(on) {
+                  if (on)
+                    root.selectedIndex = root.managementOptionOffset() + settingRow.index
+                }
+                onPopupOpenChanged: root.controlPopupOpen = popupOpen
+                onChanged: function(value) {
+                  var next = Object.assign({}, root.optionValues)
+                  next[settingRow.modelData.name] = value
+                  root.optionValues = next
+                }
+              }
+            }
+          }
+
+          Button {
+            id: saveDefaults
+            text: root.busy && root.activeCommand === "set-options"
+              ? "Saving…" : "Save defaults"
+            iconText: "󰆓"
+            hasCursor: root.managementDirty
+              && root.selectedIndex === root.managementSaveIndex()
+            enabled: root.managementDirty && !root.busy
+            opacity: root.managementDirty ? 1 : 0.5
+            onHovered: function(on) {
+              if (on) root.selectedIndex = root.managementSaveIndex()
+            }
+            onClicked: root.saveManagementOptions()
+          }
+
+          PanelSeparator { width: parent.width }
+          SectionTitle { text: "Print jobs" }
+
+          EmptyText {
+            visible: root.jobs.length === 0
+            text: root.busy && root.activeCommand === "manage"
+              ? "Loading print jobs…" : "No print jobs"
+          }
+
+          Repeater {
+            id: jobsRepeater
+            model: root.jobs
+            delegate: PrinterRow {
+              required property var modelData
+              required property int index
+              width: dashboardContent.width
+              title: modelData.name || ("Job " + modelData.id)
+              subtitle: (modelData.user || "")
+                + (modelData.stateLabel ? " · " + modelData.stateLabel : "")
+              actionText: "Cancel"
+              actionColor: root.urgent
+              hasCursor: root.selectedIndex === root.managementJobsOffset() + index
+              busy: root.busy && root.activeCommand === "cancel-job"
+              onPointerMoved: function(item, mouse) {
+                if (pointerGate.moved(item, mouse))
+                  root.selectedIndex = root.managementJobsOffset() + index
+              }
+              onActivated: {
+                root.selectedIndex = root.managementJobsOffset() + index
+                root.activateDetails()
+              }
+            }
+          }
+
+          Item { width: 1; height: Style.spacing.panelGap }
+        }
+      }
     }
   }
 
@@ -940,127 +1133,13 @@ Item {
     }
   }
 
-  component JobsView: Item {
-    function ensureCursorVisible() {
-      if (root.selectedIndex >= 0)
-        jobsList.positionViewAtIndex(root.selectedIndex, ListView.Contain)
-    }
-
-    ColumnLayout {
-      anchors.fill: parent
-      spacing: Style.spacing.rowGap
-
-      ListView {
-        id: jobsList
-        Layout.fillWidth: true
-        Layout.fillHeight: true
-        clip: true
-        spacing: Style.spacing.rowGap
-        model: root.jobs
-        delegate: ActionRow {
-          required property var modelData
-          required property int index
-          width: ListView.view.width
-          title: modelData.name || ("Job " + modelData.id)
-          description: (modelData.user || "") + (modelData.stateLabel ? " · " + modelData.stateLabel : "")
-          hasCursor: root.selectedIndex === index
-          urgentAction: true
-          onPointerMoved: function(item, mouse) {
-            if (pointerGate.moved(item, mouse)) root.selectedIndex = index
-          }
-          onActivated: {
-            if (root.selectedQueue)
-              root.runBackend("cancel-job", ["--job-id", String(modelData.id)], root.selectedQueue.identity)
-          }
-        }
-      }
-
-      EmptyText {
-        visible: root.jobs.length === 0
-        text: "No print jobs"
-      }
-    }
-  }
-
-  component OptionsView: Item {
-    function ensureCursorVisible() {
-      var item = root.selectedIndex < root.options.length
-        ? optionsRepeater.itemAt(root.selectedIndex) : saveOptionsButton
-      var flickable = optionsScroll.contentItem
-      if (!item || !flickable) return
-      var top = item.mapToItem(optionsScroll.contentItem.contentItem, 0, 0).y
-      if (top < flickable.contentY)
-        flickable.contentY = top
-      else if (top + item.height > flickable.contentY + optionsScroll.availableHeight)
-        flickable.contentY = top + item.height - optionsScroll.availableHeight
-    }
-
-    function activate(index) {
-      if (!root.selectedQueue) return
-      if (index < root.options.length) {
-        var item = optionsRepeater.itemAt(index)
-        if (item) item.toggle()
-      } else {
-        root.runBackend("set-options",
-          ["--queue", root.selectedQueue.name, "--options", JSON.stringify(root.optionValues)],
-          root.selectedQueue.identity)
-      }
-    }
-
-    ScrollView {
-      id: optionsScroll
-      anchors.fill: parent
-      clip: true
-      ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-
-      ColumnLayout {
-        width: optionsScroll.availableWidth
-        spacing: Style.spacing.panelGap
-
-        Repeater {
-          id: optionsRepeater
-          model: root.options
-          delegate: Dropdown {
-            required property var modelData
-            required property int index
-            Layout.fillWidth: true
-            hasCursor: root.selectedIndex === index
-            label: PrinterState.optionLabel(modelData)
-            value: String(root.optionValues[modelData.name] || "")
-            options: PrinterState.optionChoices(modelData)
-            onPopupOpenChanged: root.controlPopupOpen = popupOpen
-            onChanged: function(value) {
-              var next = Object.assign({}, root.optionValues)
-              next[modelData.name] = value
-              root.optionValues = next
-            }
-          }
-        }
-
-        Button {
-          id: saveOptionsButton
-          text: root.busy ? "Saving…" : "Save defaults"
-          iconText: "󰆓"
-          bordered: true
-          hasCursor: root.selectedIndex === root.options.length
-          enabled: !root.busy && root.selectedQueue
-          onClicked: {
-            if (root.selectedQueue)
-              root.runBackend("set-options",
-                ["--queue", root.selectedQueue.name, "--options", JSON.stringify(root.optionValues)],
-                root.selectedQueue.identity)
-          }
-        }
-      }
-    }
-  }
-
   component PrinterRow: CursorSurface {
     id: row
     property string title: ""
     property string subtitle: ""
     property color statusColor: Color.muted
     property string actionText: ""
+    property color actionColor: root.foreground
     property bool actionItalic: false
     property bool actionable: true
     property bool busy: false
@@ -1111,72 +1190,12 @@ Item {
       Text {
         textFormat: Text.PlainText
         text: row.actionText
-        color: row.actionable ? root.foreground : Color.muted
+        color: row.actionable ? row.actionColor : Color.muted
         font.family: Style.font.family
         font.pixelSize: Style.font.body
         font.italic: row.actionItalic
         Layout.alignment: Qt.AlignVCenter
       }
-    }
-  }
-
-  component ActionRow: CursorSurface {
-    id: actionRow
-    property string title: ""
-    property string description: ""
-    property string actionText: ""
-    property bool urgentAction: false
-    signal activated()
-    signal pointerMoved(var item, var mouse)
-
-    implicitHeight: Style.space(62)
-    bordered: true
-
-    Column {
-      anchors.left: parent.left
-      anchors.right: trailingAction.left
-      anchors.rightMargin: Style.spacing.rowGap
-      anchors.verticalCenter: parent.verticalCenter
-      anchors.leftMargin: actionRow.borderLeft + Style.spacing.rowPaddingX
-      spacing: Style.spacing.xs
-
-      Text {
-        text: actionRow.title
-        color: actionRow.urgentAction ? root.urgent : root.foreground
-        font.family: Style.font.family
-        font.pixelSize: Style.font.subtitle
-        font.bold: true
-        width: parent.width
-        elide: Text.ElideRight
-      }
-      Text {
-        text: actionRow.description
-        color: Color.muted
-        font.family: Style.font.family
-        font.pixelSize: Style.font.caption
-        width: parent.width
-        elide: Text.ElideRight
-      }
-    }
-
-    Text {
-      id: trailingAction
-      anchors.right: parent.right
-      anchors.rightMargin: actionRow.borderRight + Style.spacing.rowPaddingX
-      anchors.verticalCenter: parent.verticalCenter
-      text: actionRow.actionText || "󰅂"
-      color: actionRow.urgentAction ? root.urgent : root.foreground
-      font.family: Style.font.family
-      font.pixelSize: actionRow.actionText ? Style.font.body : Style.font.icon
-    }
-
-    MouseArea {
-      anchors.fill: parent
-      hoverEnabled: true
-      enabled: actionRow.enabled
-      cursorShape: actionRow.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-      onPositionChanged: function(mouse) { actionRow.pointerMoved(actionRow, mouse) }
-      onClicked: actionRow.activated()
     }
   }
 

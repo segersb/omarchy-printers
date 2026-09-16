@@ -33,17 +33,27 @@ shows only its own current results. Network scan remains unprivileged; only
 Full scan can invoke privileged discovery. Changing defaults is an explicit
 mutation and may invoke PolicyKit only after the user chooses **Save defaults**.
 
+Selecting an installed queue opens a unified management dashboard. Its compact
+queue actions stay fixed above one scrollable surface containing printer
+settings and print jobs. A single `manage` read combines the existing options
+and jobs adapters, avoiding serial loading phases while preserving the
+standalone protocol commands. The dashboard reloads on entry and after
+relevant mutations; it does not poll.
+
 ## Read path
 
 - pycups reads installed queues, printer attributes, jobs, defaults, and local
   model metadata.
+- The backend `manage` command reads one queue's supported/default options and
+  jobs together. This is a read-only aggregation; writes still use their
+  dedicated commands.
 - The unprivileged CUPS `driverless` helper handles normal launch and
   **Network scan**, so opening the panel never asks for administrator approval.
 - The explicit **Full scan** action uses `cups-pk-helper` because CUPS protects
   legacy `getDevices()` discovery on the default Omarchy installation.
 - If that discovery call is unavailable, the CUPS `driverless` helper keeps
   IPP printers visible while the panel clearly warns that some printers may
-  be missing. Legacy discovery is retried on the next refresh.
+  be missing. Legacy discovery is retried on the next explicit Full scan.
 - Device records are normalized and deduplicated before reaching QML.
 
 ## Write path

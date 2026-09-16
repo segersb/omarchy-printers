@@ -70,6 +70,11 @@ a **Scan results** section containing that scan's current results. Printers
 already configured in CUPS remain visible there as **Installed**; new printers
 can be installed by selecting their entire row.
 
+Selecting an installed printer opens one management dashboard. Queue actions
+stay at the top, with **Printer settings** and **Print jobs** visible together
+below. Changed settings are applied only through **Save defaults**; the action
+is unavailable while the loaded defaults are unchanged.
+
 To add it to the Omarchy menu, merge
 [`docs/omarchy-menu.jsonc`](docs/omarchy-menu.jsonc) into:
 
@@ -104,8 +109,10 @@ Full settings:
 - `Esc`: go back or close
 - Tab: move through form controls
 
-On management and settings pages, moving above the first item focuses
-**Back** so it can be activated from the keyboard.
+On the management dashboard, navigation follows its visual order: queue
+actions, setting dropdowns, **Save defaults** when settings have changed, then
+job cancellation. Moving above the first item focuses **Back** so it can be
+activated from the keyboard. Dropdowns retain the navigation keys while open.
 
 The compact popup intentionally omits administrative actions such as adding,
 removing, pausing, and printing a test page. Use **Open printer settings** for

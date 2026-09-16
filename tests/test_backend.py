@@ -393,6 +393,16 @@ class OperationsTests(unittest.TestCase):
         self.assertEqual(
             self.backend.options({"queue": "Office"})["defaults"]["Duplex"], "None"
         )
+        management = self.backend.manage({"queue": "Office"})
+        self.assertEqual(management["queue"], "Office")
+        self.assertEqual(management["jobs"][0]["id"], 4)
+        self.assertEqual(management["defaults"]["Duplex"], "None")
+        self.assertEqual(management["options"][0]["name"], "Duplex")
+
+    def test_manage_requires_queue(self):
+        with self.assertRaises(printers.BackendError) as context:
+            self.backend.manage({})
+        self.assertEqual(context.exception.code, "invalid-request")
 
     def test_queues_does_not_run_discovery(self):
         self.assertEqual(self.backend.queues({})["queues"][0]["name"], "Office")
@@ -588,6 +598,10 @@ class CLITests(unittest.TestCase):
         self.assertEqual(
             printers._request_from_args(args), {"queue": "Office", "enabled": False}
         )
+
+    def test_manage_argv_requires_queue_value(self):
+        args = printers.build_parser().parse_args(["manage", "--queue", "Office"])
+        self.assertEqual(printers._request_from_args(args), {"queue": "Office"})
 
     def test_snapshot_legacy_flag_is_typed(self):
         args = printers.build_parser().parse_args(
