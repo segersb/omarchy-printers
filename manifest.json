@@ -4,7 +4,7 @@
   "name": "Printers",
   "version": "0.1.0",
   "author": "Ben Segers",
-  "description": "Discover, add, and manage local CUPS printers",
+  "description": "An Omarchy-native replacement for system printer settings, with printer and job management",
   "kinds": [
     "panel",
     "bar-widget"

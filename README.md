@@ -1,8 +1,14 @@
 # Omarchy Printers
 
-A keyboard-first Omarchy Shell printer widget. Its compact bar popup follows
-the built-in Wi-Fi visual language for status and printer options; **Open
-printer settings** opens the full management panel.
+A printer settings panel built for Omarchy Shell, intended to replace the
+traditional `system-config-printer` screens and bring printer management into
+Omarchy. Manage printers, defaults, and print jobs in one keyboard-first panel,
+with a compact bar popup for status and quick settings.
+
+The optional [system dialog override](#replace-the-system-printer-settings-dialog)
+also makes Chrome's printer-management button open this panel. The longer-term
+goal is to make this experience part of Omarchy itself; today it is distributed
+as a community plugin.
 
 ![Installed printer view](docs/screenshots/installed.png)
 
@@ -85,7 +91,59 @@ To add it to the Omarchy menu, merge
 The plugin installer intentionally does not run install hooks, so this menu
 entry is opt-in.
 
+## Replace the system printer settings dialog
+
+After installing and enabling the plugin, you can make applications that
+launch `system-config-printer` through `PATH` open the Omarchy panel instead.
+This has been tested with Chrome on Omarchy. It replaces the printer-management
+screen, not an application's print preview or document print dialog.
+
+Create this executable at `~/.local/bin/system-config-printer`:
+
+```sh
+#!/bin/sh
+exec omarchy-shell shell summon segersb.omarchy-printers '{}'
+```
+
+Make it executable:
+
+```bash
+chmod +x ~/.local/bin/system-config-printer
+```
+
+The directory must precede `/usr/bin` in the desktop session's `PATH`; a shell
+alias does not affect Chrome. Create `~/.config/uwsm/env.d/90-local-bin-first`
+(create the parent directory if needed) with:
+
+```sh
+case "$PATH" in
+  "$HOME/.local/bin"|"$HOME/.local/bin:"*) ;;
+  *) export PATH="$HOME/.local/bin:$PATH" ;;
+esac
+```
+
+**Log out and back in**, then open Chrome and try its printer-management
+button. Existing processes keep their old environment. In a new terminal,
+`command -v system-config-printer` should show the launcher in your home
+directory. This PATH change gives all executables in `~/.local/bin` precedence
+over matching system commands.
+
+The packaged dialog remains available as `/usr/bin/system-config-printer`.
+Applications that launch that absolute path bypass the override.
+
+To undo the override, remove the launcher created above:
+
+```bash
+rm ~/.local/bin/system-config-printer
+```
+
+You can also remove `~/.config/uwsm/env.d/90-local-bin-first` if you added it
+solely for this override, then log out and back in to restore PATH ordering.
+
 ## Update and remove
+
+If you enabled the system dialog override, remove it before disabling or
+removing the plugin so applications can open the packaged dialog again.
 
 ```bash
 omarchy plugin update segersb.omarchy-printers
@@ -151,5 +209,6 @@ journalctl --user --since "1 minute ago" --no-pager |
 
 ## Safety
 
-This plugin does not replace `system-config-printer`, alter desktop entries, or
-change Chromium's printer-manager command.
+Installing the plugin does not automatically change system printer launchers.
+The optional user-level override above redirects `system-config-printer`
+launches without modifying the packaged executable, desktop entries, or Chrome.
