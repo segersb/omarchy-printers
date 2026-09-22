@@ -390,6 +390,7 @@ Panel {
         height: implicitHeight
 
         Text {
+          textFormat: Text.PlainText
           id: heroIcon
           anchors.left: parent.left
           anchors.verticalCenter: parent.verticalCenter
@@ -408,6 +409,7 @@ Panel {
           spacing: Style.space(2)
 
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             text: "Printers"
             color: root.bar.foreground
@@ -418,6 +420,7 @@ Panel {
           }
 
           Text {
+            textFormat: Text.PlainText
             width: parent.width
             text: root.busy && root.snapshot.queues.length === 0
               ? "CHECKING PRINTERS"
@@ -488,6 +491,7 @@ Panel {
                   spacing: Style.space(10)
 
                   Text {
+                    textFormat: Text.PlainText
                     id: presenceDot
                     readonly property string stateKind: PrinterState.queueStateKind(modelData)
                     text: stateKind === "paused" ? "○" : "●"
@@ -503,6 +507,7 @@ Panel {
                     spacing: Style.space(2)
 
                     Text {
+                      textFormat: Text.PlainText
                       width: parent.width
                       text: modelData.name
                       color: root.bar.foreground
@@ -513,6 +518,7 @@ Panel {
                     }
 
                     Text {
+                      textFormat: Text.PlainText
                       width: parent.width
                       text: PrinterState.queueStatus(modelData)
                       color: Color.muted
@@ -523,6 +529,7 @@ Panel {
                   }
 
                   Text {
+                    textFormat: Text.PlainText
                     id: expandIcon
                     anchors.verticalCenter: parent.verticalCenter
                     text: root.selectedQueueIndex === index ? "󰅃" : "󰅀"
@@ -545,6 +552,7 @@ Panel {
             }
 
             Text {
+              textFormat: Text.PlainText
               visible: root.snapshot.queues.length === 0
               width: parent.width
               text: root.busy ? "Checking printers…" : "No printers added"
@@ -587,6 +595,7 @@ Panel {
                 function toggle() { optionDropdown.toggle() }
 
                 Text {
+                  textFormat: Text.PlainText
                   anchors.left: parent.left
                   anchors.right: optionDropdown.left
                   anchors.rightMargin: Style.space(12)
@@ -635,6 +644,7 @@ Panel {
               opacity: root.defaultsDirty || (root.busy && root.activeCommand === "set-options") ? 1 : 0.5
 
               Text {
+                textFormat: Text.PlainText
                 anchors.centerIn: parent
                 text: root.busy && root.activeCommand === "set-options"
                   ? "Saving…" : "Save printer defaults"
@@ -670,6 +680,7 @@ Panel {
             }
 
             Text {
+              textFormat: Text.PlainText
               width: parent.width
               text: root.busy ? "Loading printer options…" : "No configurable options"
               color: Color.muted
@@ -679,6 +690,7 @@ Panel {
           }
 
           Text {
+            textFormat: Text.PlainText
             visible: root.statusMessage !== ""
             width: parent.width
             text: root.statusMessage
@@ -710,6 +722,7 @@ Panel {
         hasCursor: root.cursorActive && root.cursorIndex === root.settingsIndex
 
         Text {
+          textFormat: Text.PlainText
           anchors.left: parent.left
           anchors.leftMargin: settingsRow.borderLeft + Style.spacing.rowPaddingX
           anchors.verticalCenter: parent.verticalCenter
@@ -720,6 +733,7 @@ Panel {
         }
 
         Text {
+          textFormat: Text.PlainText
           anchors.right: parent.right
           anchors.rightMargin: settingsRow.borderRight + Style.spacing.rowPaddingX
           anchors.verticalCenter: parent.verticalCenter

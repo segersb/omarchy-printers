@@ -12,6 +12,23 @@ stderr, where Quickshell records them in its log. User-facing errors use stable
 error codes and short messages rather than raw CUPS, D-Bus, or subprocess
 output.
 
+All plugin-owned `Text` elements explicitly use `Text.PlainText`, including
+row titles, status messages, option labels, and reusable text components.
+The shared Omarchy `Dropdown`, `SearchableDropdown`, and `ConfirmDialog`
+components must also render their dynamic labels and messages as plain text;
+the installed versions were checked for this contract. Markup in printer
+metadata remains literal data rather than formatting or image references.
+
+Before emitting JSON, the backend rejects strings longer than 4,096 characters,
+more than 256 queues, 1,000 jobs, 10,000 driver models, 256 options or choices,
+or 100 discovery results. Other collections are limited to 1,024 entries.
+Nested data is limited to 12 levels, 100,000 nodes, and a total encoded response
+of 4 MiB. Errors and diagnostics are length-limited too. Oversized data produces
+a controlled error; identifiers and option values are never silently truncated.
+Settings and jobs are checked separately so one oversized section does not
+hide the other. These are limits on data passed to the shell, not memory limits
+on CUPS or the backend's initial retrieval from its dependencies.
+
 ## Shell surfaces
 
 `PrinterQuickPanel.qml` is a `bar-widget` built on Omarchy's shared `Panel` and

@@ -20,6 +20,20 @@ PK_PATH = "/"
 PK_INTERFACE = PK_NAME
 DISCOVERY_TIMEOUT = 8
 MAX_DEVICES = 100
+MAX_TEXT_LENGTH = 4096
+MAX_COLLECTION_ITEMS = 1024
+MAX_PAYLOAD_DEPTH = 12
+MAX_PAYLOAD_NODES = 100_000
+MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+COLLECTION_LIMITS = {
+    "queues": 256,
+    "jobs": 1000,
+    "models": 10_000,
+    "options": 256,
+    "choices": 256,
+    "available": MAX_DEVICES,
+    "scanResults": MAX_DEVICES,
+}
 
 
 @dataclass
@@ -31,6 +45,45 @@ class BackendError(Exception):
 
     def __str__(self) -> str:
         return self.message
+
+
+def validate_payload(data: Any) -> None:
+    """Bound data crossing into the shell; never truncate actionable identifiers."""
+    nodes = 0
+
+    def reject() -> None:
+        raise BackendError(
+            "response-too-large",
+            "Printer data is too large to display safely.",
+        )
+
+    def visit(value: Any, depth: int = 0, field: str = "") -> None:
+        nonlocal nodes
+        nodes += 1
+        if nodes > MAX_PAYLOAD_NODES or depth > MAX_PAYLOAD_DEPTH:
+            reject()
+        if isinstance(value, str):
+            if len(value) > MAX_TEXT_LENGTH:
+                reject()
+        elif isinstance(value, Mapping):
+            if len(value) > MAX_COLLECTION_ITEMS:
+                reject()
+            for key, item in value.items():
+                visit(key, depth + 1)
+                visit(item, depth + 1, str(key))
+        elif isinstance(value, (list, tuple)):
+            if len(value) > COLLECTION_LIMITS.get(field, MAX_COLLECTION_ITEMS):
+                reject()
+            for item in value:
+                visit(item, depth + 1)
+
+    visit(data)
+    # Count the actual encoded size, including escaping, before any stdout write.
+    size = 0
+    for chunk in json.JSONEncoder(ensure_ascii=True, separators=(",", ":")).iterencode(data):
+        size += len(chunk)
+        if size > MAX_RESPONSE_BYTES:
+            reject()
 
 
 class CupsAPI(Protocol):
@@ -741,12 +794,15 @@ class PrinterBackend:
         result: dict[str, Any] = {"queue": queue, "options": [], "defaults": {}, "jobs": []}
         try:
             options = self.options({"queue": queue})
+            validate_payload(options)
             result.update(options=options.get("options", []), defaults=options.get("defaults", {}))
         except Exception as exc:
             error = map_exception(exc, "options")
             result["optionsError"] = {"code": error.code, "message": error.message}
         try:
-            result["jobs"] = self.jobs({"queue": queue})["jobs"]
+            jobs = self.jobs({"queue": queue})
+            validate_payload(jobs)
+            result["jobs"] = jobs["jobs"]
         except Exception as exc:
             error = map_exception(exc, "jobs")
             result["jobsError"] = {"code": error.code, "message": error.message}
@@ -852,6 +908,7 @@ def dispatch(
     backend = backend or PrinterBackend(PyCupsAdapter(), PkHelperAdapter())
     try:
         data = getattr(backend, COMMANDS[command])(request)
+        validate_payload(data)
     except Exception as exc:
         raise map_exception(exc, command) from exc
     return {"version": API_VERSION, "ok": True, "data": data}
@@ -967,17 +1024,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         args = build_parser().parse_args(argv)
         response = dispatch(args.command, _request_from_args(args))
+        validate_payload(response)
         json.dump(response, sys.stdout, sort_keys=True, separators=(",", ":"))
         sys.stdout.write("\n")
         return 0
     except BackendError as exc:
         if exc.diagnostic:
-            print(f"printers backend: {exc.diagnostic}", file=sys.stderr)
+            print(f"printers backend: {exc.diagnostic[:MAX_TEXT_LENGTH]}", file=sys.stderr)
         json.dump(
             {
                 "version": API_VERSION,
                 "ok": False,
-                "error": {"code": exc.code, "message": exc.message},
+                "error": {
+                    "code": exc.code[:MAX_TEXT_LENGTH],
+                    "message": exc.message[:MAX_TEXT_LENGTH],
+                },
             },
             sys.stdout,
             sort_keys=True,

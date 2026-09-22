@@ -622,6 +622,7 @@ Item {
           }
 
           Text {
+            textFormat: Text.PlainText
             text: {
               if (root.viewName === "details" && root.selectedQueue) return root.selectedQueue.name
               if (root.viewName === "models") return "Choose a driver"
@@ -678,6 +679,7 @@ Item {
         }
 
         Text {
+          textFormat: Text.PlainText
           visible: root.statusMessage !== ""
           text: root.statusMessage
           color: root.statusKind === "error" ? root.urgent
@@ -689,6 +691,7 @@ Item {
         }
 
         Text {
+          textFormat: Text.PlainText
           text: root.keyboardHint()
           color: Util.alpha(Color.muted, 0.75)
           font.family: Style.font.family
@@ -893,6 +896,7 @@ Item {
       spacing: Style.spacing.panelGap
 
       Text {
+        textFormat: Text.PlainText
         text: root.selectedQueue ? PrinterState.queueStatus(root.selectedQueue) : ""
         color: root.selectedQueue
           && PrinterState.queueStateKind(root.selectedQueue) === "attention"
@@ -983,6 +987,7 @@ Item {
               function toggle() { settingDropdown.toggle() }
 
               Text {
+                textFormat: Text.PlainText
                 anchors.left: parent.left
                 anchors.right: settingDropdown.left
                 anchors.rightMargin: Style.spacing.rowGap
@@ -1094,6 +1099,7 @@ Item {
       spacing: Style.spacing.panelGap
 
       Text {
+        textFormat: Text.PlainText
         text: root.selectedDevice ? "Confirm a local driver for " + root.selectedDevice.name : ""
         color: root.foreground
         font.family: Style.font.family
@@ -1173,6 +1179,7 @@ Item {
         Layout.fillWidth: true
         spacing: Style.spacing.xs
         Text {
+          textFormat: Text.PlainText
           text: row.title
           color: root.foreground
           font.family: Style.font.family
@@ -1182,6 +1189,7 @@ Item {
           Layout.fillWidth: true
         }
         Text {
+          textFormat: Text.PlainText
           text: row.busy ? "Working…" : (row.failed ? root.statusMessage : row.subtitle)
           color: row.failed ? root.urgent : row.statusColor
           font.family: Style.font.family
@@ -1204,6 +1212,7 @@ Item {
   }
 
   component SectionTitle: Text {
+    textFormat: Text.PlainText
     Layout.fillHeight: false
     color: Color.muted
     font.family: Style.font.family
@@ -1213,6 +1222,7 @@ Item {
   }
 
   component EmptyText: Text {
+    textFormat: Text.PlainText
     Layout.fillHeight: false
     color: Color.muted
     font.family: Style.font.family
