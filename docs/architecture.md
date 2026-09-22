@@ -15,7 +15,7 @@ output.
 ## Shell surfaces
 
 `PrinterQuickPanel.qml` is a `bar-widget` built on Omarchy's shared `Panel` and
-`KeyboardPanel` components. It shows installed-printer presence and all
+`KeyboardPanel` components. It shows installed-printer CUPS status and all
 defaults exposed by the local queue, then links to `PrinterPanel.qml` for full
 administration. The quick popup deliberately excludes add/remove, pause,
 legacy discovery, and test-page actions.
@@ -37,8 +37,10 @@ Selecting an installed queue opens a unified management dashboard. Its compact
 queue actions stay fixed above one scrollable surface containing printer
 settings and print jobs. A single `manage` read combines the existing options
 and jobs adapters, avoiding serial loading phases while preserving the
-standalone protocol commands. The dashboard reloads on entry and after
-relevant mutations; it does not poll.
+standalone protocol commands. Settings and jobs can fail independently; the
+affected section shows a load error while the other remains available.
+Cancelling a job reloads only jobs, preserving unsaved settings. The dashboard
+does not poll.
 
 ## Read path
 
@@ -52,8 +54,7 @@ relevant mutations; it does not poll.
 - The explicit **Full scan** action uses `cups-pk-helper` because CUPS protects
   legacy `getDevices()` discovery on the default Omarchy installation.
 - If that discovery call is unavailable, the CUPS `driverless` helper keeps
-  IPP printers visible while the panel clearly warns that some printers may
-  be missing. Legacy discovery is retried on the next explicit Full scan.
+  IPP printers visible. Legacy discovery is retried on the next explicit Full scan.
 - Device records are normalized and deduplicated before reaching QML.
 
 ## Write path
@@ -73,12 +74,12 @@ Identity is independent of a user-visible queue name:
 4. Normalized device URI as a final fallback.
 
 This identity drives installed-device association and cursor preservation.
-When CUPS exposes an installed queue only by host URI while discovery exposes
-only its DNS-SD service, an exact normalized queue/service name is used as a
-final association fallback. A matched discovery record remains in **Scan
-results** as a non-actionable **Installed** row and is also shown as **Seen on
-network** on the installed queue. CUPS queue state and discovery presence
-remain separate so a paused queue is not reported as offline.
+Model metadata without a serial number does not establish identity. Installed
+queues are matched by identity or normalized URI, never by display name or
+model description. When a host URI and a DNS-SD service cannot be associated
+by either, the discovery record remains available. A matched record remains in **Scan
+results** as a non-actionable **Installed** row. Installed-printer status comes
+only from CUPS queue state, independent of discovery results.
 
 ## Driver selection
 

@@ -20,6 +20,8 @@ Item {
   property var selectedQueue: null
   property var selectedDevice: null
   property var jobs: []
+  property bool optionsLoadFailed: false
+  property bool jobsLoadFailed: false
   property var models: []
   property var options: []
   property var optionValues: ({})
@@ -64,7 +66,7 @@ Item {
     closingFromHost = false
     window.visible = true
     snapshot = {
-      queues: queuesWithoutPresence(snapshot.queues),
+      queues: snapshot.queues || [],
       available: []
     }
     scanVisible = false
@@ -73,15 +75,6 @@ Item {
     restoreCursor()
     loadQueues()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
-  }
-
-  function queuesWithoutPresence(queues) {
-    return (queues || []).map(function(queue) {
-      var copy = Object.assign({}, queue)
-      delete copy.online
-      delete copy.presenceStale
-      return copy
-    })
   }
 
   function close() {
@@ -156,6 +149,8 @@ Item {
     if (focusSection === "installed") {
       selectedQueue = row
       jobs = []
+      optionsLoadFailed = false
+      jobsLoadFailed = false
       options = []
       optionValues = ({})
       viewName = "details"
@@ -254,6 +249,15 @@ Item {
     ], selectedQueue.identity)
   }
 
+  function reloadJobs() {
+    if (backend.running) {
+      managementReload.restart()
+      return
+    }
+    if (selectedQueue && viewName === "details")
+      runBackend("jobs", ["--queue", selectedQueue.name], selectedQueue.identity)
+  }
+
   function loadQueues() {
     if (busy) return
     selectedIdentity = rowIdentity()
@@ -267,7 +271,7 @@ Item {
     if (busy) return
     selectedIdentity = rowIdentity()
     snapshot = {
-      queues: queuesWithoutPresence(snapshot.queues),
+      queues: snapshot.queues || [],
       available: []
     }
     scanVisible = true
@@ -336,10 +340,6 @@ Item {
         queues: data.queues || [],
         available: currentAvailable
       }
-      if (data.warning) {
-        statusKind = ""
-        statusMessage = String(data.warning.message || "Printer discovery is unavailable")
-      }
       updateSelectedQueue()
       if (viewName === "main") {
         restoreCursor()
@@ -366,12 +366,21 @@ Item {
     }
     if (command === "manage") {
       if (!selectedQueue) return
+      optionsLoadFailed = !!data.optionsError
+      jobsLoadFailed = !!data.jobsError
       options = data.options || []
       var values = {}
       for (var i = 0; i < options.length; i++)
         values[options[i].name] = options[i].default
       optionValues = values
       jobs = data.jobs || []
+      selectedIndex = Math.max(-1, Math.min(
+        selectedIndex, managementTargetCount() - 1))
+      return
+    }
+    if (command === "jobs") {
+      jobs = data.jobs || []
+      jobsLoadFailed = false
       selectedIndex = Math.max(-1, Math.min(
         selectedIndex, managementTargetCount() - 1))
       return
@@ -447,6 +456,7 @@ Item {
       return
     }
     if (!response.ok) {
+      if (activeCommand === "jobs") jobsLoadFailed = true
       failedIdentity = activeIdentity
       statusKind = "error"
       statusMessage = friendlyError(activeCommand, response.error)
@@ -508,15 +518,7 @@ Item {
   Timer {
     id: managementReload
     interval: 50
-    onTriggered: {
-      if (backend.running) {
-        restart()
-        return
-      }
-      if (root.selectedQueue && root.viewName === "details")
-        root.runBackend("manage", ["--queue", root.selectedQueue.name],
-          root.selectedQueue.identity)
-    }
+    onTriggered: root.reloadJobs()
   }
 
   PointerMoveGate {
@@ -964,7 +966,8 @@ Item {
           EmptyText {
             visible: root.managementOptions.length === 0
             text: root.busy && root.activeCommand === "manage"
-              ? "Loading printer settings…" : "No printer settings available"
+              ? "Loading printer settings…"
+              : (root.optionsLoadFailed ? "Couldn’t load printer settings" : "No printer settings available")
           }
 
           Repeater {
@@ -1036,8 +1039,9 @@ Item {
 
           EmptyText {
             visible: root.jobs.length === 0
-            text: root.busy && root.activeCommand === "manage"
-              ? "Loading print jobs…" : "No print jobs"
+            text: root.busy && (root.activeCommand === "manage" || root.activeCommand === "jobs")
+              ? "Loading print jobs…"
+              : (root.jobsLoadFailed ? "Couldn’t load print jobs" : "No print jobs")
           }
 
           Repeater {

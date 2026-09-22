@@ -67,8 +67,6 @@ function queueStatus(queue) {
   }
   var label = labels[kind]
   if (queue.isDefault) label += " · Default"
-  if (queue.online === true)
-    label += queue.presenceStale ? " · Seen recently" : " · Seen on network"
   return label
 }
 
@@ -83,24 +81,6 @@ function queueStateKind(queue) {
   if (Number(queue.state) === 5 || !queue.enabled || !queue.accepting) return "paused"
   if (Number(queue.state) === 4) return "printing"
   return "ready"
-}
-
-function applyPresenceGrace(queues, lastSeen, now, graceMs) {
-  var seen = Object.assign({}, lastSeen || {})
-  var result = (queues || []).map(function(queue) {
-    var copy = Object.assign({}, queue)
-    var identity = String(copy.identity || "")
-    if (copy.online === true) {
-      if (identity) seen[identity] = now
-    } else if (identity && seen[identity] && now - seen[identity] <= graceMs) {
-      copy.online = true
-      copy.presenceStale = true
-    } else if (identity) {
-      delete seen[identity]
-    }
-    return copy
-  })
-  return { queues: result, lastSeen: seen }
 }
 
 function mergeAvailable(current, cached, queues) {
@@ -240,7 +220,6 @@ if (typeof module !== "undefined") {
     preserveCursor: preserveCursor,
     queueStatus: queueStatus,
     queueStateKind: queueStateKind,
-    applyPresenceGrace: applyPresenceGrace,
     mergeAvailable: mergeAvailable,
     scanResultCanInstall: scanResultCanInstall,
     quickOptions: quickOptions,

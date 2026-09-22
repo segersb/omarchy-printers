@@ -37,7 +37,7 @@ available.
 
 ## Install
 
-Once this repository is published:
+Install and enable the plugin:
 
 ```bash
 omarchy plugin add https://github.com/segersb/omarchy-printers.git --enable

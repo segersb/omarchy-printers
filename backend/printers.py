@@ -140,12 +140,6 @@ def device_identity(device: Mapping[str, Any]) -> str:
         return "ieee1284:" + "|".join(
             _norm_words(value) for value in (fields.get("MFG", ""), fields.get("MDL", ""), serial)
         )
-    if device_id:
-        normalized = ";".join(
-            f"{key}:{_norm_words(value)}" for key, value in sorted(fields.items()) if value
-        )
-        if normalized:
-            return "ieee1284-id:" + normalized
     uri = _text(device.get("device-uri"))
     try:
         parsed = urlsplit(uri)
@@ -300,19 +294,8 @@ def device_matches_queue(
     if device_uri and device_uri == queue_uri:
         return True
 
-    device_names = {
-        _norm_words(_text(device.get(key)))
-        for key in ("name", "device-info", "device-make-and-model")
-        if _text(device.get(key))
-    }
-    device_names.discard("")
-    queue_names = {
-        _norm_words(_text(queue.get(key)))
-        for key in ("name", "printer-info", "printer-dns-sd-name")
-        if _text(queue.get(key))
-    }
-    queue_names.discard("")
-    return bool(device_names & queue_names)
+    # Display names and model descriptions are not unique device identifiers.
+    return False
 
 
 def _commands(value: str) -> set[str]:
@@ -659,11 +642,6 @@ class PrinterBackend:
                 }
         else:
             discovered = dedupe_devices(discover_driverless())
-        for queue in queues:
-            found = any(device_matches_queue(device, queue) for device in discovered)
-            queue["online"] = True if found else (
-                False if include_legacy and not warning else None
-            )
         existing = [queue["name"] for queue in queues]
         reserved = list(existing)
         available = []
@@ -760,13 +738,19 @@ class PrinterBackend:
 
     def manage(self, request: Mapping[str, Any]) -> dict[str, Any]:
         queue = required_string(request, "queue")
-        options = self.options({"queue": queue})
-        return {
-            "queue": queue,
-            "options": options.get("options", []),
-            "defaults": options.get("defaults", {}),
-            "jobs": self.jobs({"queue": queue})["jobs"],
-        }
+        result: dict[str, Any] = {"queue": queue, "options": [], "defaults": {}, "jobs": []}
+        try:
+            options = self.options({"queue": queue})
+            result.update(options=options.get("options", []), defaults=options.get("defaults", {}))
+        except Exception as exc:
+            error = map_exception(exc, "options")
+            result["optionsError"] = {"code": error.code, "message": error.message}
+        try:
+            result["jobs"] = self.jobs({"queue": queue})["jobs"]
+        except Exception as exc:
+            error = map_exception(exc, "jobs")
+            result["jobsError"] = {"code": error.code, "message": error.message}
+        return result
 
     def cancel_job(self, request: Mapping[str, Any]) -> dict[str, Any]:
         job_id = required_int(request, "jobId", minimum=1)

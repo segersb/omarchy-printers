@@ -210,6 +210,29 @@ class DiscoveryTests(unittest.TestCase):
         self.assertEqual({item["kind"] for item in devices}, {"usb", "socket", "lpd"})
         self.assertFalse(any(item["driverless"] for item in devices))
 
+    def test_keeps_same_model_printers_without_serial_numbers(self):
+        devices = printers.dedupe_devices([
+            {"device-uri": f"ipp://printer-{number}/ipp/print",
+             "device-id": "MFG:Acme;MDL:Laser;CMD:PDF;"}
+            for number in (1, 2)
+        ])
+        self.assertEqual(len(devices), 2)
+        self.assertNotEqual(devices[0]["identity"], devices[1]["identity"])
+
+    def test_different_printer_with_same_model_is_installable(self):
+        cups = FakeCups()
+        cups.queue_rows[0]["printer-info"] = "Acme Laser"
+        helper = FakeHelper()
+        helper.device_rows = [{
+            "device-uri": "ipp://another-printer/ipp/print",
+            "device-uuid": "different-uuid",
+            "device-info": "Office",
+            "device-make-and-model": "Acme Laser",
+        }]
+        result = printers.PrinterBackend(cups, helper).snapshot({"includeLegacy": True})
+        self.assertEqual(len(result["available"]), 1)
+        self.assertFalse(result["scanResults"][0]["installed"])
+
     def test_marks_ipp_devices_as_driverless(self):
         device = printers.normalize_device(
             {"device-uri": "ipps://printer.local/ipp/print", "device-info": "Office"}
@@ -232,7 +255,7 @@ class DiscoveryTests(unittest.TestCase):
         available = printers.filter_installed(devices, queues)
         self.assertEqual([item["identity"] for item in available], ["uuid:new"])
 
-    def test_matches_installed_by_normalized_queue_name(self):
+    def test_queue_name_alone_does_not_prove_device_is_installed(self):
         device = printers.normalize_device(
             {
                 "device-uri": "ipps://Brother%20HL-L2445DW._ipps._tcp.local/",
@@ -244,8 +267,8 @@ class DiscoveryTests(unittest.TestCase):
             "identity": "uri:ipp://brwc4137538a799/ipp/print",
             "uri": "ipps://BRWC4137538A799.local:443/ipp/print",
         }
-        self.assertTrue(printers.device_matches_queue(device, queue))
-        self.assertEqual(printers.filter_installed([device], [queue]), [])
+        self.assertFalse(printers.device_matches_queue(device, queue))
+        self.assertEqual(printers.filter_installed([device], [queue]), [device])
 
 
 class QueueNameTests(unittest.TestCase):
@@ -404,6 +427,23 @@ class OperationsTests(unittest.TestCase):
             self.backend.manage({})
         self.assertEqual(context.exception.code, "invalid-request")
 
+    def test_manage_returns_jobs_when_settings_fail(self):
+        with patch.object(self.cups, "options", side_effect=RuntimeError("PPD unavailable")):
+            result = self.backend.manage({"queue": "Office"})
+        self.assertEqual(result["jobs"][0]["id"], 4)
+        self.assertEqual(result["options"], [])
+        self.assertEqual(result["defaults"], {})
+        self.assertIn("optionsError", result)
+        self.assertNotIn("jobsError", result)
+
+    def test_manage_returns_settings_when_jobs_fail(self):
+        with patch.object(self.cups, "jobs", side_effect=RuntimeError("Jobs unavailable")):
+            result = self.backend.manage({"queue": "Office"})
+        self.assertEqual(result["options"][0]["name"], "Duplex")
+        self.assertEqual(result["jobs"], [])
+        self.assertIn("jobsError", result)
+        self.assertNotIn("optionsError", result)
+
     def test_queues_does_not_run_discovery(self):
         self.assertEqual(self.backend.queues({})["queues"][0]["name"], "Office")
         self.assertEqual(self.helper.calls, [])
@@ -426,21 +466,21 @@ class OperationsTests(unittest.TestCase):
     def test_test_page_uses_read_adapter(self):
         self.assertEqual(self.backend.test_page({"queue": "Office"})["jobId"], 99)
 
-    def test_snapshot_keeps_queue_state_separate_from_online(self):
+    def test_snapshot_keeps_cups_queue_state(self):
         with patch.object(printers, "discover_driverless", return_value=[]):
             data = self.backend.snapshot({})
         queue = data["queues"][0]
         self.assertTrue(queue["enabled"])
-        self.assertIsNone(queue["online"])
+        self.assertNotIn("online", queue)
 
-    def test_snapshot_marks_name_matched_queue_seen_and_not_available(self):
+    def test_snapshot_marks_uri_matched_queue_installed_and_not_available(self):
         discovered = {
-            "device-uri": "ipps://Office._ipps._tcp.local/",
+            "device-uri": "ipps://office.local:631/ipp/print/",
             "device-info": "Office",
         }
         with patch.object(printers, "discover_driverless", return_value=[discovered]):
             data = self.backend.snapshot({})
-        self.assertTrue(data["queues"][0]["online"])
+        self.assertNotIn("online", data["queues"][0])
         self.assertEqual(data["available"], [])
         self.assertEqual(len(data["scanResults"]), 1)
         self.assertTrue(data["scanResults"][0]["installed"])
@@ -479,7 +519,7 @@ class OperationsTests(unittest.TestCase):
                 {"includeLegacy": True}
             )
         self.assertEqual([queue["name"] for queue in data["queues"]], ["Office"])
-        self.assertIsNone(data["queues"][0]["online"])
+        self.assertNotIn("online", data["queues"][0])
         self.assertEqual(data["warning"]["code"], "discovery-failed")
 
     def test_rejects_unsupported_option_value(self):

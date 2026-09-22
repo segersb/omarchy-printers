@@ -57,14 +57,14 @@ assert.equal(state.queueStatus({
   state: 3,
   isDefault: true,
   online: true
-}), "Ready · Default · Seen on network")
+}), "Ready · Default")
 assert.equal(state.queueStatus({
   enabled: true,
   accepting: true,
   state: 3,
   presenceStale: true,
   online: true
-}), "Ready · Seen recently")
+}), "Ready")
 assert.equal(state.queueStatus({
   enabled: false,
   accepting: false,
@@ -102,23 +102,6 @@ assert.equal(state.queueStateKind({
   state: 5,
   "printer-state-reasons": ["paused"]
 }), "paused")
-
-const present = state.applyPresenceGrace([
-  { identity: "printer-a", online: true }
-], {}, 1000, 5000)
-assert.equal(present.lastSeen["printer-a"], 1000)
-
-const transientMiss = state.applyPresenceGrace([
-  { identity: "printer-a", online: false }
-], present.lastSeen, 4000, 5000)
-assert.equal(transientMiss.queues[0].online, true)
-assert.equal(transientMiss.queues[0].presenceStale, true)
-
-const expiredMiss = state.applyPresenceGrace([
-  { identity: "printer-a", online: false }
-], present.lastSeen, 7000, 5000)
-assert.equal(expiredMiss.queues[0].online, false)
-assert.equal(expiredMiss.lastSeen["printer-a"], undefined)
 
 assert.deepEqual(state.mergeAvailable(
   [{ identity: "driverless" }],
@@ -178,5 +161,56 @@ assert.deepEqual(state.mergeAvailable(
 ), [])
 assert.equal(state.scanResultCanInstall({ installed: true }), false)
 assert.equal(state.scanResultCanInstall({ installed: false }), true)
+
+// Exercise the panel's real handlers without requiring a running desktop.
+const fs = require("node:fs")
+const path = require("node:path")
+const vm = require("node:vm")
+const panelSource = fs.readFileSync(path.join(__dirname, "../PrinterPanel.qml"), "utf8")
+function panelFunction(name) {
+  const start = panelSource.indexOf("  function " + name + "(")
+  assert.notEqual(start, -1)
+  const end = panelSource.indexOf("\n  function ", start + 1)
+  return panelSource.slice(start, end)
+}
+const panel = {
+  selectedQueue: { name: "Office", identity: "uuid:office" },
+  viewName: "details",
+  selectedIndex: 0,
+  backend: { running: false },
+  managementTargetCount: () => 1,
+  managementReload: { restart() { panel.reloadJobs() } },
+  runBackend(command, args, identity) {
+    assert.equal(command, "jobs")
+    assert.deepEqual(Array.from(args), ["--queue", "Office"])
+    assert.equal(identity, "uuid:office")
+    panel.handleSuccess(command, { jobs: [] })
+  }
+}
+vm.createContext(panel)
+vm.runInContext(panelFunction("handleSuccess") + panelFunction("reloadJobs"), panel)
+panel.handleSuccess("manage", {
+  options: [{ name: "Duplex", default: "None" }], jobs: [{ id: 4 }]
+})
+panel.optionValues.Duplex = "DuplexNoTumble"
+panel.handleSuccess("cancel-job", {})
+assert.equal(panel.jobs.length, 0)
+assert.equal(panel.optionValues.Duplex, "DuplexNoTumble")
+assert.equal(panel.options[0].default, "None")
+assert.equal(state.optionsDirty(panel.options, panel.optionValues), true)
+
+panel.handleSuccess("manage", {
+  options: [], optionsError: { code: "cups-error" }, jobs: [{ id: 4 }]
+})
+assert.equal(panel.optionsLoadFailed, true)
+assert.equal(panel.jobsLoadFailed, false)
+assert.equal(panel.jobs[0].id, 4)
+panel.handleSuccess("manage", {
+  options: [{ name: "Duplex", default: "None" }], jobs: [],
+  jobsError: { code: "cups-error" }
+})
+assert.equal(panel.optionsLoadFailed, false)
+assert.equal(panel.jobsLoadFailed, true)
+assert.equal(panel.options[0].name, "Duplex")
 
 console.log("ui state tests passed")
