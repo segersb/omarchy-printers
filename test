@@ -5,4 +5,8 @@ repo_dir=$(cd "$(dirname "$0")" && pwd)
 
 python3 -m unittest discover -s "$repo_dir/tests" -p 'test_*.py'
 node "$repo_dir/tests/ui_state_test.js"
+node "$repo_dir/tests/live_state_test.js"
+node "$repo_dir/tests/print_state_test.js"
 omarchy plugin validate "$repo_dir"
+
+dbus-run-session -- python3 "$repo_dir/tests/portal_scenario.py"

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+from pathlib import Path
 import re
 import subprocess
 import sys
@@ -439,6 +440,12 @@ def map_exception(exc: BaseException, operation: str) -> BackendError:
         return BackendError(
             "authorization-cancelled", "Authorization was cancelled.", diagnostic=diagnostic
         )
+    # cups-pk-helper conflates an abandoned challenge with failed authorization.
+    # Preserve that ambiguity instead of claiming the user was explicitly denied.
+    if name == "org.opensuse.CupsPkHelper.Mechanism.NotPrivileged":
+        return BackendError(
+            "authorization-not-granted", "Authorization was not completed.", diagnostic=diagnostic
+        )
     if any(term in folded for term in ("notauthorized", "not authorized", "accessdenied")):
         return BackendError(
             "authorization-denied", "Authorization was denied.", diagnostic=diagnostic
@@ -588,7 +595,12 @@ class PyCupsAdapter:
         return {"queue": queue, "defaults": defaults, "options": choices}
 
     def test_page(self, queue: str) -> int | None:
-        result = self.connection.printTestPage(queue)
+        # The banner-based printTestPage path can produce invalid PDF with
+        # cups-filters. Submit our bundled PDF through the normal print path.
+        result = self.connection.printFile(
+            queue, str(Path(__file__).resolve().parents[1] / "assets/test-page.pdf"), "Omarchy test page",
+            {"document-format": "application/pdf", "copies": "1", "job-sheets": "none"},
+        )
         return int(result) if result is not None else None
 
 
@@ -674,6 +686,19 @@ class PrinterBackend:
     def queues(self, _: Mapping[str, Any]) -> dict[str, Any]:
         default, queues = self.cups.queues()
         return {"default": default, "queues": queues}
+
+    def status(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        result = self.queues({})
+        if request.get("queue"):
+            queue = required_string(request, "queue")
+            try:
+                jobs = self.jobs({"queue": queue})
+                validate_payload(jobs)
+                result.update(jobs)
+            except Exception as exc:
+                error = map_exception(exc, "jobs")
+                result.update(jobs=[], jobsError={"code": error.code, "message": error.message})
+        return result
 
     def snapshot(self, request: Mapping[str, Any]) -> dict[str, Any]:
         default, queues = self.cups.queues()
@@ -881,6 +906,7 @@ def required_int(request: Mapping[str, Any], key: str, minimum: int | None = Non
 COMMANDS = {
     "preflight": "preflight",
     "queues": "queues",
+    "status": "status",
     "snapshot": "snapshot",
     "models": "models",
     "add": "add",
@@ -979,6 +1005,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     command_parser("preflight")
     command_parser("queues")
+    command_parser("status").add_argument("--queue")
 
     snapshot = command_parser("snapshot")
     snapshot.add_argument("--timeout", type=int)

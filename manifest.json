@@ -2,16 +2,18 @@
   "schemaVersion": 1,
   "id": "segersb.omarchy-printers",
   "name": "Printers",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "author": "Ben Segers",
-  "description": "An Omarchy-native replacement for system printer settings, with printer and job management",
+  "description": "Omarchy-style printer settings, print previews, and right-click printing.",
   "kinds": [
     "panel",
-    "bar-widget"
+    "bar-widget",
+    "service"
   ],
   "entryPoints": {
     "panel": "PrinterPanel.qml",
-    "barWidget": "PrinterQuickPanel.qml"
+    "barWidget": "PrinterQuickPanel.qml",
+    "service": "PrinterService.qml"
   },
   "barWidget": {
     "displayName": "Printers",

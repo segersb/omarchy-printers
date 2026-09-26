@@ -14,6 +14,8 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(manifest["id"], "segersb.omarchy-printers")
         self.assertIn("panel", manifest["kinds"])
         self.assertIn("bar-widget", manifest["kinds"])
+        self.assertIn("service", manifest["kinds"])
+        self.assertEqual(manifest["entryPoints"]["service"], "PrinterService.qml")
         self.assertEqual(manifest["entryPoints"]["panel"], "PrinterPanel.qml")
         self.assertEqual(
             manifest["entryPoints"]["barWidget"], "PrinterQuickPanel.qml"

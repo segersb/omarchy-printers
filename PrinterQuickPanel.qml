@@ -33,6 +33,39 @@ Panel {
   property bool initialized: false
   property bool pendingRefresh: false
   property bool pendingRefreshInvalidatesOptions: false
+  readonly property var printerService: bar && bar.shell
+    ? bar.shell.serviceFor("segersb.omarchy-printers") : null
+  readonly property bool liveStatus: printerService && printerService.live && printerService.fresh
+  readonly property bool isPrinting: liveStatus && snapshot.queues.some(function(queue) {
+    return Number(queue.state) === 4
+  })
+
+  function applyLiveQueues() {
+    if (!printerService) return
+    var name = selectedQueue ? selectedQueue.name : ""
+    var oldCount = snapshot.queues.length
+    var cursorQueue = cursorIndex < oldCount ? snapshot.queues[cursorIndex].name : ""
+    snapshot = { queues: printerService.queues, available: [] }
+    var nextIndex = -1
+    for (var i = 0; i < snapshot.queues.length; i++)
+      if (snapshot.queues[i].name === name) nextIndex = i
+    selectedQueueIndex = nextIndex
+    if (name && nextIndex < 0) {
+      options = []
+      optionValues = ({})
+    }
+    if (cursorQueue) {
+      for (var j = 0; j < snapshot.queues.length; j++)
+        if (snapshot.queues[j].name === cursorQueue) { cursorIndex = j; break }
+    } else cursorIndex += snapshot.queues.length - oldCount
+    cursorIndex = Math.min(cursorIndex, settingsIndex)
+  }
+
+  Connections {
+    target: root.printerService
+    function onUpdated() { root.applyLiveQueues() }
+  }
+  onPrinterServiceChanged: if (printerService) applyLiveQueues()
 
   readonly property var selectedQueue: selectedQueueIndex >= 0
     && selectedQueueIndex < snapshot.queues.length
@@ -43,9 +76,10 @@ Panel {
   readonly property int targetCount: snapshot.queues.length
     + displayOptions.length
     + (saveActionEnabled ? 1 : 0)
-    + 1
+    + 2
   readonly property int optionOffset: snapshot.queues.length
   readonly property int saveIndex: optionOffset + displayOptions.length
+  readonly property int integrationIndex: targetCount - 2
   readonly property int settingsIndex: targetCount - 1
   readonly property bool busy: backend.running
   readonly property bool settingsBusy: busy
@@ -67,6 +101,8 @@ Panel {
     if (opened) {
       cursorActive = false
       cursorIndex = 0
+      if (printerService) printerService.refresh()
+      else refresh(false)
     } else {
       closeOptionPopups()
       controlPopupOpen = false
@@ -74,6 +110,11 @@ Panel {
   }
 
   function refresh(invalidateOptions) {
+    if (printerService) {
+      if (invalidateOptions === true) optionCache = ({})
+      printerService.refresh()
+      return
+    }
     if (backend.running) {
       pendingRefresh = true
       if (invalidateOptions === true) pendingRefreshInvalidatesOptions = true
@@ -184,6 +225,12 @@ Panel {
       bar.shell.summon("segersb.omarchy-printers", "{}")
   }
 
+  function openIntegration() {
+    close()
+    if (bar && bar.shell)
+      bar.shell.summon("segersb.omarchy-printers", JSON.stringify({integration: true}))
+  }
+
   function moveCursor(delta) {
     if (!cursorActive) {
       cursorActive = true
@@ -199,11 +246,12 @@ Panel {
     if (index < snapshot.queues.length) return queueRepeater.itemAt(index)
     if (index < saveIndex) return optionRepeater.itemAt(index - optionOffset)
     if (saveActionEnabled && index === saveIndex) return saveRow
+    if (index === integrationIndex) return integrationRow
     return settingsRow
   }
 
   function ensureCursorVisible() {
-    if (cursorIndex === settingsIndex) return
+    if (cursorIndex >= integrationIndex) return
     var item = targetItem(cursorIndex)
     if (!item || viewport.height <= 0) return
     var point = item.mapToItem(content, 0, 0)
@@ -235,7 +283,8 @@ Panel {
       saveOptions()
       return
     }
-    openSettings()
+    if (activeIndex === integrationIndex) openIntegration()
+    else openSettings()
   }
 
   function setPointerCursor(index, item, mouse) {
@@ -337,8 +386,10 @@ Panel {
     anchors.fill: parent
     bar: root.bar
     text: root.icon
-    active: root.hasProblem
-    tooltipText: root.hasProblem ? "Printer needs attention" : "Printers"
+    active: root.hasProblem || root.isPrinting
+    activeColor: root.hasProblem ? Color.urgent : Color.accent
+    tooltipText: root.hasProblem ? "Printer needs attention"
+      : (!root.liveStatus ? "Live status unavailable" : (root.isPrinting ? "Printing" : "Printers"))
     onPressed: root.toggle()
   }
 
@@ -351,6 +402,11 @@ Panel {
     function hide() { root.close() }
     function toggle() { root.toggle() }
     function refresh(): string { root.refreshAll(); return "ok" }
+    function status(): string {
+      return JSON.stringify({ monitor: root.printerService ? root.printerService.status() : null,
+        printing: root.isPrinting, attention: root.hasProblem, iconColor: button.active
+          ? String(button.activeColor) : String(button.foreground) })
+    }
   }
 
   KeyboardPanel {
@@ -366,7 +422,7 @@ Panel {
         + headerSeparator.implicitHeight
         + content.implicitHeight
         + footerSeparator.implicitHeight
-        + settingsRow.height
+        + settingsRow.height + integrationRow.height
         + Style.space(56)
     )
 
@@ -425,7 +481,7 @@ Panel {
             text: root.busy && root.snapshot.queues.length === 0
               ? "CHECKING PRINTERS"
               : PrinterState.printerSummary(root.snapshot.queues).toUpperCase()
-            color: Color.muted
+            color: Qt.darker(root.bar.foreground, 1.4)
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.caption
             font.bold: true
@@ -475,12 +531,15 @@ Panel {
 
               CursorSurface {
                 id: queueRow
+                enabled: !root.settingsBusy
+                  || (root.activeCommand === "options" && root.selectedQueueIndex === index)
+                opacity: enabled ? 1 : 0.4
                 required property var modelData
                 required property int index
                 width: parent.width
                 height: Style.space(54)
                 bordered: true
-                hasCursor: root.cursorActive && root.cursorIndex === index
+                hasCursor: enabled && root.cursorActive && root.cursorIndex === index
 
                 Row {
                   anchors.left: parent.left
@@ -496,7 +555,7 @@ Panel {
                     readonly property string stateKind: PrinterState.queueStateKind(modelData)
                     text: stateKind === "paused" ? "○" : "●"
                     color: stateKind === "attention" ? Color.urgent
-                      : (stateKind === "paused" ? Color.muted
+                      : (stateKind === "paused" ? Qt.darker(root.bar.foreground, 1.4)
                         : Color.flatColor("green", root.bar.foreground))
                     font.family: root.bar.fontFamily
                     font.pixelSize: Style.font.body
@@ -521,7 +580,7 @@ Panel {
                       textFormat: Text.PlainText
                       width: parent.width
                       text: PrinterState.queueStatus(modelData)
-                      color: Color.muted
+                      color: root.bar.foreground
                       font.family: root.bar.fontFamily
                       font.pixelSize: Style.font.caption
                       elide: Text.ElideRight
@@ -533,7 +592,7 @@ Panel {
                     id: expandIcon
                     anchors.verticalCenter: parent.verticalCenter
                     text: root.selectedQueueIndex === index ? "󰅃" : "󰅀"
-                    color: Color.muted
+                    color: Qt.darker(root.bar.foreground, 1.4)
                     font.family: root.bar.fontFamily
                     font.pixelSize: Style.font.body
                   }
@@ -543,8 +602,6 @@ Panel {
                   anchors.fill: parent
                   hoverEnabled: true
                   cursorShape: Qt.PointingHandCursor
-                  enabled: !root.settingsBusy
-                    || (root.activeCommand === "options" && root.selectedQueueIndex === index)
                   onPositionChanged: function(mouse) { root.setPointerCursor(index, queueRow, mouse) }
                   onClicked: root.toggleQueue(index)
                 }
@@ -556,7 +613,7 @@ Panel {
               visible: root.snapshot.queues.length === 0
               width: parent.width
               text: root.busy ? "Checking printers…" : "No printers added"
-              color: Color.muted
+              color: Qt.darker(root.bar.foreground, 1.4)
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.bodySmall
             }
@@ -589,7 +646,6 @@ Panel {
 
                 width: parent.width
                 height: optionDropdown.implicitHeight
-                opacity: root.settingsBusy ? 0.6 : 1
 
                 function close() { optionDropdown.close() }
                 function toggle() { optionDropdown.toggle() }
@@ -608,6 +664,8 @@ Panel {
                 }
 
                 Dropdown {
+
+                  opacity: enabled ? 1 : 0.4
                   id: optionDropdown
                   width: parent.width * 0.62
                   anchors.right: parent.right
@@ -617,7 +675,7 @@ Panel {
                   value: String(root.optionValues[optionRow.modelData.name] || "")
                   options: PrinterState.optionChoices(optionRow.modelData)
                   foreground: root.bar.foreground
-                  hasCursor: root.cursorActive && root.cursorIndex === root.optionOffset + optionRow.index
+                  hasCursor: enabled && root.cursorActive && root.cursorIndex === root.optionOffset + optionRow.index
                   onHovered: function(on) {
                     if (on) {
                       root.cursorActive = true
@@ -639,9 +697,10 @@ Panel {
               width: parent.width
               height: Style.spacing.controlHeight
               bordered: true
-              hasCursor: root.saveActionEnabled
+              hasCursor: enabled && root.saveActionEnabled
                 && root.cursorActive && root.cursorIndex === root.saveIndex
-              opacity: root.defaultsDirty || (root.busy && root.activeCommand === "set-options") ? 1 : 0.5
+              enabled: root.saveActionEnabled
+              opacity: enabled ? 1 : 0.4
 
               Text {
                 textFormat: Text.PlainText
@@ -683,7 +742,7 @@ Panel {
               textFormat: Text.PlainText
               width: parent.width
               text: root.busy ? "Loading printer options…" : "No configurable options"
-              color: Color.muted
+              color: Qt.darker(root.bar.foreground, 1.4)
               font.family: root.bar.fontFamily
               font.pixelSize: Style.font.bodySmall
             }
@@ -695,7 +754,7 @@ Panel {
             width: parent.width
             text: root.statusMessage
             color: root.statusKind === "error" ? Color.urgent
-              : (root.statusKind === "success" ? Color.flatColor("green", root.bar.foreground) : Color.muted)
+              : (root.statusKind === "success" ? Color.flatColor("green", root.bar.foreground) : Qt.darker(root.bar.foreground, 1.4))
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.bodySmall
             wrapMode: Text.WordWrap
@@ -708,9 +767,50 @@ Panel {
         id: footerSeparator
         anchors.left: parent.left
         anchors.right: parent.right
-        anchors.bottom: settingsRow.top
+        anchors.bottom: integrationRow.top
         anchors.bottomMargin: Style.space(14)
         foreground: root.bar.foreground
+      }
+
+      CursorSurface {
+        id: integrationRow
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: settingsRow.top
+        height: Style.spacing.controlHeight
+        hasCursor: enabled && root.cursorActive && root.cursorIndex === root.integrationIndex
+
+        Text {
+          textFormat: Text.PlainText
+          anchors.left: parent.left
+          anchors.leftMargin: integrationRow.borderLeft + Style.spacing.rowPaddingX
+          anchors.verticalCenter: parent.verticalCenter
+          text: "System integration"
+          color: root.bar.foreground
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.body
+        }
+
+        Text {
+          textFormat: Text.PlainText
+          anchors.right: parent.right
+          anchors.rightMargin: integrationRow.borderRight + Style.spacing.rowPaddingX
+          anchors.verticalCenter: parent.verticalCenter
+          text: "󰅂"
+          color: root.bar.foreground
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.icon
+        }
+
+        MouseArea {
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onPositionChanged: function(mouse) {
+            root.setPointerCursor(root.integrationIndex, integrationRow, mouse)
+          }
+          onClicked: root.openIntegration()
+        }
       }
 
       CursorSurface {
@@ -719,14 +819,14 @@ Panel {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         height: Style.spacing.controlHeight
-        hasCursor: root.cursorActive && root.cursorIndex === root.settingsIndex
+        hasCursor: enabled && root.cursorActive && root.cursorIndex === root.settingsIndex
 
         Text {
           textFormat: Text.PlainText
           anchors.left: parent.left
           anchors.leftMargin: settingsRow.borderLeft + Style.spacing.rowPaddingX
           anchors.verticalCenter: parent.verticalCenter
-          text: "Open printer settings"
+          text: "Printer settings"
           color: root.bar.foreground
           font.family: root.bar.fontFamily
           font.pixelSize: Style.font.body

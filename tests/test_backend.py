@@ -348,6 +348,11 @@ class ErrorTests(unittest.TestCase):
         self.assertEqual(error.code, "authorization-cancelled")
         self.assertNotIn("detail", error.message)
 
+    def test_helper_does_not_distinguish_cancellation_from_denial(self):
+        error = printers.map_exception(self.DBusError(
+            "org.opensuse.CupsPkHelper.Mechanism.NotPrivileged", "Not Authorized"), "PrinterSetEnabled")
+        self.assertEqual(error.code, "authorization-not-granted")
+
     def test_maps_authorization_denial(self):
         error = printers.map_exception(
             self.DBusError("org.freedesktop.DBus.Error.AccessDenied"), "PrinterDelete"
@@ -705,6 +710,20 @@ class OptionsAdapterTests(unittest.TestCase):
 
         def getPPD(self, queue):
             return "/controlled/printer.ppd"
+
+    def test_test_page_submits_pdf_instead_of_banner(self):
+        class Connection:
+            def printFile(self, queue, filename, title, options):
+                self.submission = (queue, filename, title, options)
+                return 42
+
+        connection = Connection()
+        adapter = printers.PyCupsAdapter(connection, self.CupsModule())
+        self.assertEqual(adapter.test_page("Office"), 42)
+        self.assertEqual(connection.submission, (
+            "Office", str(printers.Path(printers.__file__).resolve().parents[1] / "assets/test-page.pdf"), "Omarchy test page",
+            {"document-format": "application/pdf", "copies": "1", "job-sheets": "none"},
+        ))
 
     def test_ppd_is_always_removed_after_reading(self):
         adapter = printers.PyCupsAdapter(self.Connection(), self.CupsModule())

@@ -26,6 +26,21 @@ function normalizedCursor(state, section, index) {
   }
 }
 
+function moveMainCursor(state, section, index, delta, busy, wrap) {
+  var targets = busy ? [] : [{section: "scan", index: 0}, {section: "scan", index: 1}]
+  ;["installed", "available"].forEach(function(name) {
+    var rows = name === "installed" ? state.queues : state.available
+    ;(rows || []).forEach(function(row, i) { targets.push({section: name, index: i}) })
+  })
+  if (!targets.length) return {section: "", index: -1}
+  var current = targets.findIndex(function(target) {
+    return target.section === section && target.index === index
+  })
+  var next = current < 0 ? (delta > 0 ? 0 : targets.length - 1) : current + delta
+  next = wrap ? (next + targets.length) % targets.length : Math.max(0, Math.min(targets.length - 1, next))
+  return targets[next]
+}
+
 function moveCursor(state, section, index, delta) {
   var cursor = normalizedCursor(state, section, index)
   var sections = visibleSections(state)
@@ -203,6 +218,35 @@ function optionsDirty(options, values) {
   })
 }
 
+function supplyRows(info) {
+  function list(value) {
+    return value === undefined || value === null ? [] : (Array.isArray(value) ? value : [value])
+  }
+  var names = list(info["marker-names"])
+  var types = list(info["marker-types"])
+  var colors = list(info["marker-colors"])
+  var levels = list(info["marker-levels"])
+  var knownColors = {"#000000": "Black", "#00FFFF": "Cyan", "#FF00FF": "Magenta", "#FFFF00": "Yellow"}
+  var rows = []
+  var count = Math.max(names.length, types.length, colors.length, levels.length)
+  for (var i = 0; i < count; i++) {
+    var rawColor = String(colors[i] || "").toUpperCase()
+    var swatches = /^(#[0-9A-F]{6})+$/.test(rawColor) ? rawColor.match(/#[0-9A-F]{6}/g) : []
+    var name = String(names[i] || "").trim()
+    if (name.indexOf("(unknown IPP value tag") === 0) name = ""
+    var type = String(types[i] || "supply").replace(/-/g, " ")
+    if (type === "unknown" || type === "other") type = "supply"
+    var colorName = swatches.length === 1 ? knownColors[swatches[0]] : ""
+    var label = name || (colorName ? colorName + " " + type
+      : type.charAt(0).toUpperCase() + type.slice(1) + " " + (i + 1))
+    var level = levels[i]
+    rows.push({label: label, colors: swatches,
+      value: typeof level === "number" && level >= 0 && level <= 100 ? level + "%"
+        : level === -3 ? "Some remaining" : "Level unavailable"})
+  }
+  return rows
+}
+
 function printerSummary(queues) {
   var items = queues || []
   if (items.length === 0) return "No printers added"
@@ -217,6 +261,7 @@ if (typeof module !== "undefined") {
     visibleSections: visibleSections,
     normalizedCursor: normalizedCursor,
     moveCursor: moveCursor,
+    moveMainCursor: moveMainCursor,
     preserveCursor: preserveCursor,
     queueStatus: queueStatus,
     queueStateKind: queueStateKind,
@@ -227,6 +272,7 @@ if (typeof module !== "undefined") {
     optionLabel: optionLabel,
     optionChoices: optionChoices,
     optionsDirty: optionsDirty,
+    supplyRows: supplyRows,
     printerSummary: printerSummary
   }
 }

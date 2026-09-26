@@ -18,7 +18,14 @@ Item {
   property int selectedIndex: -1
   property string selectedIdentity: ""
   property var selectedQueue: null
+  onSelectedQueueChanged: {
+    if (viewName === "details" && selectedQueue && selectedQueue.isDefault && selectedIndex === 0)
+      selectedIndex = 1
+  }
   property var selectedDevice: null
+  property bool detailsKeyboardFocus: false
+  property string detailsTab: "settings"
+  property var printerInfo: ({})
   property var jobs: []
   property bool optionsLoadFailed: false
   property bool jobsLoadFailed: false
@@ -40,6 +47,92 @@ Item {
   property bool pendingSnapshotIncludesLegacy: false
   property bool pendingQueueEnabled: false
   property bool busy: backend.running
+  readonly property var printerService: shell ? shell.serviceFor("segersb.omarchy-printers") : null
+  property bool liveUpdatePending: false
+  readonly property string watchedQueue: window.visible && viewName === "details" && selectedQueue
+    ? selectedQueue.name : ""
+  onWatchedQueueChanged: if (printerService) printerService.selectedQueueName = watchedQueue
+  onPrinterServiceChanged: if (printerService) printerService.selectedQueueName = watchedQueue
+  onBusyChanged: if (!busy && liveUpdatePending) Qt.callLater(applyLiveStatus)
+
+  Process {
+    id: infoReader
+    onRunningChanged: {
+      if (running) infoTimeout.restart()
+      else infoTimeout.stop()
+    }
+    stdout: StdioCollector {
+      onStreamFinished: {
+        try { root.printerInfo = JSON.parse(text) } catch (error) { root.printerInfo = ({}) }
+      }
+    }
+  }
+
+  Timer {
+    id: infoTimeout
+    interval: 12000
+    onTriggered: infoReader.signal(9)
+  }
+
+  function attributeRows() {
+    var info = printerInfo
+    var queue = selectedQueue || {}
+    var rows = []
+    function add(label, value) {
+      if (value !== undefined && value !== null && String(value).length)
+        rows.push({label: label, value: String(value)})
+    }
+    add("Status", PrinterState.queueStatus(queue))
+    add("Details", info["printer-state-message"] || queue.stateMessage)
+    add("Model", info["printer-make-and-model"] || queue["printer-make-and-model"])
+    add("Description", info["printer-info"] || queue["printer-info"])
+    add("Location", info["printer-location"] || queue["printer-location"])
+    add("Connection", info.connection)
+    add("Address", info.address)
+    add("Default printer", queue.isDefault ? "Yes" : "No")
+    add("Accepting jobs", queue.accepting ? "Yes" : "No")
+    if (info["color-supported"] !== undefined) add("Color printing", info["color-supported"] ? "Supported" : "Monochrome")
+    var sides = info["sides-supported"] || []
+    if (sides.length) add("Two-sided printing", sides.length > 1 ? "Supported" : "Not supported")
+    rows = rows.concat(PrinterState.supplyRows(info))
+    var resolutions = info["printer-resolution-supported"] || []
+    add("Resolution", resolutions.map(function(value) {
+      return value[0] + " × " + value[1] + (value[2] === 4 ? " dpcm" : " dpi")
+    }).join(", "))
+    add("Printer ID", (info["printer-uuid"] || "").replace(/^urn:uuid:/, ""))
+    var alerts = info["printer-alert-description"] || []
+    if (typeof alerts === "string") alerts = [alerts]
+    add("Printer status", alerts.join(" · "))
+    return rows
+  }
+
+  function applyLiveStatus() {
+    if (!printerService) return
+    if (busy) { liveUpdatePending = true; return }
+    liveUpdatePending = false
+    var identity = viewName === "main" ? rowIdentity() : selectedIdentity
+    snapshot = { queues: printerService.queues, available: snapshot.available }
+    updateSelectedQueue()
+    if (viewName === "main") {
+      selectedIdentity = identity
+      restoreCursor()
+    }
+    if (watchedQueue && printerService.jobQueue === watchedQueue) {
+      var oldJobIndex = detailsTab === "jobs" ? selectedIndex - managementJobsOffset() : -1
+      var jobId = oldJobIndex >= 0 && oldJobIndex < jobs.length ? jobs[oldJobIndex].id : -1
+      jobs = printerService.jobs
+      jobsLoadFailed = printerService.jobsFailed
+      if (jobId >= 0) {
+        for (var i = 0; i < jobs.length; i++)
+          if (jobs[i].id === jobId) { selectedIndex = managementJobsOffset() + i; break }
+      }
+      selectedIndex = Math.max(-1, Math.min(selectedIndex, managementTargetCount() - 1))
+    }
+  }
+  Connections {
+    target: root.printerService
+    function onUpdated() { root.applyLiveStatus() }
+  }
   readonly property bool fullScanActive: pendingSnapshotAfterQueues
     ? pendingSnapshotIncludesLegacy : activeLegacyDiscovery
   readonly property var managementOptions: PrinterState.quickOptions(options)
@@ -53,7 +146,7 @@ Item {
   }
   readonly property string backendPath: pluginDir + "/backend/printers.py"
   readonly property color foreground: Color.foreground
-  readonly property color background: Color.background
+  readonly property color background: Qt.rgba(Color.background.r, Color.background.g, Color.background.b, 1)
   readonly property color accent: Color.accent
   readonly property color urgent: Color.urgent
 
@@ -62,7 +155,40 @@ Item {
     if (viewName === "main") restoreCursor()
   }
 
+  property var printDialogs: ({})
+  Component { id: printDialogComponent; PrintDialog {} }
+  PrintSetup {
+    id: printSetup
+    pluginDir: root.pluginDir
+    onOpenedChanged: Qt.callLater(root.releaseIfUnused)
+    onBusyChanged: Qt.callLater(root.releaseIfUnused)
+  }
+
+  function releaseIfUnused() {
+    if (window.visible || printSetup.opened || printSetup.busy || Object.keys(printDialogs).length) return
+    if (!closingFromHost && shell && typeof shell.hide === "function")
+      shell.hide("segersb.omarchy-printers")
+  }
+
   function open(payloadJson) {
+    var payload = {}
+    try { payload = JSON.parse(payloadJson || "{}") } catch (e) {}
+    if (payload.integration === true) { printSetup.open(); return }
+    if (payload.printRequest && /^[0-9a-f]{48}$/.test(payload.printRequest)) {
+      var request = payload.printRequest
+      if (!printDialogs[request]) {
+        var dialog = printDialogComponent.createObject(root, {requestId: request, pluginDir: pluginDir})
+        if (dialog) {
+          printDialogs[request] = dialog
+          dialog.finished.connect(function() {
+            delete root.printDialogs[request]
+            dialog.destroy()
+            Qt.callLater(root.releaseIfUnused)
+          })
+        }
+      }
+      return
+    }
     closingFromHost = false
     window.visible = true
     snapshot = {
@@ -74,6 +200,7 @@ Item {
     viewName = "main"
     restoreCursor()
     loadQueues()
+    if (printerService) printerService.refresh()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -92,27 +219,18 @@ Item {
       Qt.callLater(function() { keyCatcher.forceActiveFocus() })
       return
     }
-    if (shell && typeof shell.hide === "function")
-      shell.hide("segersb.omarchy-printers")
-    else
-      window.visible = false
-  }
-
-  function keyboardHint() {
-    if (viewName === "main")
-      return "j/k or arrows navigate · enter select · r network scan · f full scan · esc close"
-    if (viewName === "details")
-      return "j/k or arrows navigate · enter activate · esc back"
-    return "j/k or arrows navigate · enter select · esc back"
+    window.visible = false
   }
 
   function rowIdentity() {
+    if (focusSection === "scan") return ""
     var rows = focusSection === "installed" ? snapshot.queues : snapshot.available
     if (!rows || selectedIndex < 0 || selectedIndex >= rows.length) return ""
     return String(rows[selectedIndex].identity || "")
   }
 
   function restoreCursor() {
+    if (focusSection === "scan") return
     var cursor = PrinterState.preserveCursor(snapshot, focusSection, selectedIdentity)
     focusSection = cursor.section
     selectedIndex = cursor.index
@@ -121,9 +239,9 @@ Item {
     Qt.callLater(function() { mainView.ensureCursorVisible() })
   }
 
-  function moveCursor(delta) {
+  function moveCursor(delta, wrap) {
     pointerGate.reset()
-    var cursor = PrinterState.moveCursor(snapshot, focusSection, selectedIndex, delta)
+    var cursor = PrinterState.moveMainCursor(snapshot, focusSection, selectedIndex, delta, busy, !!wrap)
     focusSection = cursor.section
     selectedIndex = cursor.index
     selectedIdentity = rowIdentity()
@@ -144,6 +262,10 @@ Item {
   }
 
   function activateMainRow() {
+    if (focusSection === "scan") {
+      if (!busy) scan(selectedIndex === 1)
+      return
+    }
     var row = selectedRow()
     if (!row || busy) return
     if (focusSection === "installed") {
@@ -153,8 +275,13 @@ Item {
       jobsLoadFailed = false
       options = []
       optionValues = ({})
+      detailsTab = "settings"
+      printerInfo = ({})
+      infoReader.running = false
+      infoReader.command = ["python3", pluginDir + "/backend/printer_info.py", selectedQueue.name]
+      infoReader.running = true
       viewName = "details"
-      selectedIndex = 0
+      selectedIndex = selectedQueue.isDefault ? 1 : 0
       runBackend("manage", ["--queue", selectedQueue.name], selectedQueue.identity)
     } else {
       if (!PrinterState.scanResultCanInstall(row)) return
@@ -180,8 +307,29 @@ Item {
   function activateDetails() {
     if (!selectedQueue) return
     if (selectedIndex < 0) return
-    var actions = managementActions()
-    var action = selectedIndex < actions.length ? actions[selectedIndex] : ""
+    if (selectedIndex === 0) {
+      if (!selectedQueue.isDefault) activateManagementAction("default")
+    } else if (selectedIndex < 4) {
+      activateManagementAction(["default", "enabled", "test", "remove"][selectedIndex])
+    } else if (selectedIndex < managementOptionOffset()) {
+      selectDetailsTab(["settings", "jobs", "attributes"][selectedIndex - 4])
+
+    } else if (detailsTab === "settings" && selectedIndex < managementSaveIndex()) {
+      var optionItem = managementView.optionItem(
+        selectedIndex - managementOptionOffset())
+      if (optionItem) optionItem.toggle()
+    } else if (detailsTab === "settings" && managementDirty && selectedIndex === managementSaveIndex()) {
+      saveManagementOptions()
+    } else if (detailsTab === "jobs") {
+      var jobIndex = selectedIndex - managementJobsOffset()
+      if (jobIndex >= 0 && jobIndex < jobs.length)
+        runBackend("cancel-job", ["--job-id", String(jobs[jobIndex].id)],
+          selectedQueue.identity)
+    }
+  }
+
+  function activateManagementAction(action) {
+    if (!selectedQueue || busy) return
     if (action === "default")
       runBackend("set-default", ["--queue", selectedQueue.name], selectedQueue.identity)
     else if (action === "enabled") {
@@ -197,30 +345,31 @@ Item {
       confirmDialog.message = "Remove " + selectedQueue.name + "?"
       confirmDialog.selectedIndex = 0
       confirmDialog.opened = true
-    } else if (selectedIndex < managementSaveIndex()) {
-      var optionItem = managementView.optionItem(
-        selectedIndex - managementOptionOffset())
-      if (optionItem) optionItem.toggle()
-    } else if (managementDirty && selectedIndex === managementSaveIndex()) {
-      saveManagementOptions()
-    } else {
-      var jobIndex = selectedIndex - managementJobsOffset()
-      if (jobIndex >= 0 && jobIndex < jobs.length)
-        runBackend("cancel-job", ["--job-id", String(jobs[jobIndex].id)],
-          selectedQueue.identity)
     }
   }
 
   function managementActions() {
     if (!selectedQueue) return []
     var actions = []
-    if (!selectedQueue.isDefault) actions.push("default")
     actions.push("enabled", "test", "remove")
     return actions
   }
 
+  function moveDetailsCursor(delta, maximum) {
+    var next = Math.max(-1, Math.min(maximum, selectedIndex + delta))
+    if (next === 0 && selectedQueue && selectedQueue.isDefault)
+      next = delta > 0 ? 1 : -1
+    selectedIndex = next
+  }
+
+  function selectDetailsTab(tab) {
+    detailsTab = tab
+    selectedIndex = 4 + ["settings", "jobs", "attributes"].indexOf(tab)
+    managementView.resetScroll()
+  }
+
   function managementOptionOffset() {
-    return managementActions().length
+    return 7
   }
 
   function managementSaveIndex() {
@@ -228,11 +377,14 @@ Item {
   }
 
   function managementJobsOffset() {
-    return managementSaveIndex() + (managementDirty ? 1 : 0)
+    return managementOptionOffset()
   }
 
   function managementTargetCount() {
-    return managementJobsOffset() + jobs.length
+    if (detailsTab === "attributes") return managementOptionOffset()
+    return detailsTab === "jobs"
+      ? managementJobsOffset() + jobs.length
+      : managementSaveIndex() + (managementDirty ? 1 : 0)
   }
 
   function saveManagementOptions() {
@@ -291,15 +443,10 @@ Item {
   }
 
   function runBackend(command, args, identity) {
-    if (backend.running) {
-      statusKind = ""
-      statusMessage = "Please wait for the current printer operation"
-      return
-    }
+    if (backend.running) return
     activeCommand = command
     activeIdentity = identity || ""
     backendTimedOut = false
-    if (command !== "snapshot") statusMessage = ""
     backend.command = ["python3", backendPath, command].concat(args || [])
     backend.running = true
     backendTimeout.restart()
@@ -324,6 +471,8 @@ Item {
 
   function handleSuccess(command, data) {
     failedIdentity = ""
+    if (["add", "remove", "set-default", "set-enabled", "set-options", "test-page", "cancel-job"].indexOf(command) >= 0
+        && printerService) printerService.requestRefresh()
     if (command === "queues") {
       var queues = data.queues || []
       snapshot = {
@@ -387,12 +536,10 @@ Item {
     }
     if (command === "cancel-job") {
       if (!selectedQueue) return
-      statusMessage = "Print job cancelled"
       managementReload.restart()
       return
     }
     if (command === "add") {
-      statusMessage = "Printer added"
       snapshot = {
         queues: snapshot.queues,
         available: snapshot.available.map(function(device) {
@@ -409,7 +556,6 @@ Item {
       selectedModelId = ""
     }
     else if (command === "remove") {
-      statusMessage = "Printer removed"
       viewName = "main"
       selectedQueue = null
     } else if (command === "set-enabled" && selectedQueue) {
@@ -417,9 +563,7 @@ Item {
       updated.enabled = pendingQueueEnabled
       updated.accepting = pendingQueueEnabled
       selectedQueue = updated
-      statusMessage = pendingQueueEnabled ? "Printer resumed" : "Printer paused"
-    } else if (command === "test-page") statusMessage = "Test page sent"
-    else if (command === "set-options") {
+    } else if (command === "set-options") {
       options = options.map(function(option) {
         var updatedOption = Object.assign({}, option)
         updatedOption.default = submittedOptionValues[option.name]
@@ -428,12 +572,18 @@ Item {
       optionValues = Object.assign({}, submittedOptionValues)
       selectedIndex = Math.max(-1, Math.min(
         selectedIndex, managementTargetCount() - 1))
-      statusMessage = "Defaults saved"
     }
     if (["add", "remove", "set-default", "set-enabled", "set-options"].indexOf(command) >= 0)
       quickRefreshAfterAction.restart()
     if (["add", "remove", "set-default", "set-enabled"].indexOf(command) >= 0)
       refreshAfterAction.restart()
+  }
+
+  function dismissError() {
+    statusMessage = ""
+    statusKind = ""
+    failedIdentity = ""
+    keyCatcher.forceActiveFocus()
   }
 
   function friendlyError(command, error) {
@@ -456,14 +606,13 @@ Item {
       return
     }
     if (!response.ok) {
+      if (response.error && ["authorization-cancelled", "authorization-not-granted"].indexOf(response.error.code) >= 0) return
       if (activeCommand === "jobs") jobsLoadFailed = true
       failedIdentity = activeIdentity
       statusKind = "error"
       statusMessage = friendlyError(activeCommand, response.error)
       return
     }
-    statusKind = activeCommand === "snapshot" || activeCommand === "queues" ? "" : "success"
-    if (activeCommand === "snapshot" || activeCommand === "queues") statusMessage = ""
     handleSuccess(activeCommand, responseData(response))
   }
 
@@ -528,16 +677,18 @@ Item {
 
   FloatingWindow {
     id: window
-    title: "Printers"
+    onClosed: visible = false
+    title: "Printers · Settings"
     color: root.background
     implicitWidth: Style.space(600)
-    implicitHeight: Style.space(620)
-    minimumSize: Qt.size(Style.space(460), Style.space(440))
+    implicitHeight: Style.space(540)
+    minimumSize: Qt.size(implicitWidth, implicitHeight)
+    maximumSize: minimumSize
     visible: false
 
     onVisibleChanged: {
-      if (!visible && !root.closingFromHost && root.shell && typeof root.shell.hide === "function")
-        root.shell.hide("segersb.omarchy-printers")
+      if (!visible && !root.closingFromHost)
+        Qt.callLater(root.releaseIfUnused)
     }
 
     PanelKeyCatcher {
@@ -545,8 +696,23 @@ Item {
       anchors.fill: parent
       blocked: root.controlPopupOpen
       onMoveRequested: function(dx, dy) {
+        root.detailsKeyboardFocus = true
         if (confirmDialog.opened) {
           if (dx !== 0) confirmDialog.selectedIndex = confirmDialog.selectedIndex === 0 ? 1 : 0
+          return
+        }
+        if (dx !== 0 && root.viewName === "details" && root.selectedIndex < 4) {
+          root.moveDetailsCursor(dx, 3)
+          return
+        }
+        if (dx !== 0 && root.viewName === "details"
+            && root.selectedIndex >= 4
+            && root.selectedIndex < root.managementOptionOffset()) {
+          root.selectDetailsTab(["settings", "jobs", "attributes"][Math.max(0, Math.min(2, root.selectedIndex - 4 + dx))])
+          return
+        }
+        if (root.viewName === "main" && root.focusSection === "scan" && dx !== 0) {
+          if (!root.busy) root.selectedIndex = dx > 0 ? 1 : 0
           return
         }
         if (dy === 0) return
@@ -557,7 +723,8 @@ Item {
             ? root.managementTargetCount()
             : (root.viewName === "models" ? 2 : 0)
           if (count > 0) {
-            root.selectedIndex = Math.max(-1, Math.min(count - 1, root.selectedIndex + dy))
+            if (root.viewName === "details") root.moveDetailsCursor(dy, count - 1)
+            else root.selectedIndex = Math.max(-1, Math.min(count - 1, root.selectedIndex + dy))
             if (root.viewName === "details")
               Qt.callLater(function() { managementView.ensureCursorVisible() })
           } else root.selectedIndex = -1
@@ -577,16 +744,19 @@ Item {
       }
       onCloseRequested: {
         if (confirmDialog.opened) confirmDialog.canceled()
+        else if (errorBanner.visible) root.dismissError()
         else root.requestClose()
       }
       onTabRequested: function(direction) {
+        root.detailsKeyboardFocus = true
         if (confirmDialog.opened)
           confirmDialog.selectedIndex = confirmDialog.selectedIndex === 0 ? 1 : 0
+        else if (root.viewName === "main")
+          root.moveCursor(direction, true)
         else if (root.viewName === "models")
           root.selectedIndex = Math.max(-1, Math.min(1, root.selectedIndex + direction))
         else if (root.viewName === "details") {
-          root.selectedIndex = Math.max(-1, Math.min(
-            root.managementTargetCount() - 1, root.selectedIndex + direction))
+          root.moveDetailsCursor(direction, root.managementTargetCount() - 1)
           Qt.callLater(function() { managementView.ensureCursorVisible() })
         }
       }
@@ -611,45 +781,131 @@ Item {
           Layout.fillWidth: true
 
           Button {
+
+            opacity: enabled ? 1 : 0.4
             visible: root.viewName !== "main"
-            text: "Back"
+            tooltipText: "Back"
+            Accessible.name: "Back"
+            Layout.alignment: Qt.AlignTop
+            Layout.topMargin: Math.max(0, (panelTitle.implicitHeight - implicitHeight) / 2)
             iconText: "󰁍"
-            hasCursor: root.selectedIndex === -1
+            hasCursor: enabled && root.selectedIndex === -1
             onHovered: function(on) {
               if (on) root.selectedIndex = -1
             }
             onClicked: root.requestClose()
           }
 
-          Text {
-            textFormat: Text.PlainText
-            text: {
-              if (root.viewName === "details" && root.selectedQueue) return root.selectedQueue.name
-              if (root.viewName === "models") return "Choose a driver"
-              return "Printers"
-            }
-            color: root.foreground
-            font.family: Style.font.family
-            font.pixelSize: Style.font.display
-            font.bold: true
+          ColumnLayout {
             Layout.fillWidth: true
-            elide: Text.ElideRight
+            spacing: Style.space(4)
+            Item {
+              id: titleRow
+              Layout.fillWidth: true
+              implicitHeight: panelTitle.implicitHeight
+              Text {
+                textFormat: Text.PlainText
+                id: panelTitle
+                text: {
+                  if (root.viewName === "details" && root.selectedQueue) return root.selectedQueue.name
+                  if (root.viewName === "models") return "Choose a driver"
+                  return "Printers · Settings"
+                }
+                color: root.foreground
+                font.family: Style.font.family
+                font.pixelSize: Style.font.display
+                font.bold: true
+                anchors.verticalCenter: parent.verticalCenter
+                width: titleRow.width
+                elide: Text.ElideRight
+              }
+
+            }
+            Text {
+              textFormat: Text.PlainText
+              visible: root.viewName === "details"
+              text: root.selectedQueue ? PrinterState.queueStatus(root.selectedQueue) : ""
+              color: root.selectedQueue
+                && PrinterState.queueStateKind(root.selectedQueue) === "attention"
+                  ? Color.urgent
+                  : (root.selectedQueue
+                      && PrinterState.queueStateKind(root.selectedQueue) !== "paused"
+                    ? Color.flatColor("green", root.accent) : Qt.darker(Color.foreground, 1.4))
+              font.family: Style.font.family
+              font.pixelSize: Style.font.bodySmall
+            }
+          }
+
+          RowLayout {
+            visible: root.viewName === "details"
+            Layout.alignment: Qt.AlignTop
+            spacing: Style.space(2)
+            Repeater {
+              model: ["default", "enabled", "test", "remove"]
+              delegate: Button {
+                id: headerAction
+                required property string modelData
+                required property int index
+                readonly property bool isDefault: !!root.selectedQueue && root.selectedQueue.isDefault
+                readonly property bool working: root.busy && root.activeCommand ===
+                  ({"default": "set-default", "enabled": "set-enabled", "test": "test-page", "remove": "remove"})[modelData]
+                readonly property string label: modelData === "default"
+                  ? (isDefault ? "Default printer" : "Make default")
+                  : modelData === "test" ? "Print test page"
+                  : modelData === "remove" ? "Remove printer" : managementView.actionLabel(modelData)
+                Layout.leftMargin: modelData === "remove" ? Style.spacing.controlGap : 0
+                text: modelData === "default" ? (isDefault ? "★" : "☆") : ""
+                iconText: modelData === "default" ? "" : managementView.actionIcon(modelData)
+                foreground: working ? root.accent : modelData === "remove" ? root.urgent
+                  : modelData === "default" && isDefault ? root.accent : root.foreground
+                enabled: !root.busy && !(modelData === "default" && isDefault)
+                opacity: working || enabled || (modelData === "default" && isDefault) ? 1 : 0.4
+                hasCursor: enabled && root.selectedIndex === index
+                Accessible.name: label
+                onHovered: function(on) {
+                  if (on && enabled) { root.detailsKeyboardFocus = false; root.selectedIndex = index }
+                }
+                onClicked: { root.selectedIndex = index; root.activateDetails() }
+                ToolTip {
+                  visible: window.visible && root.viewName === "details"
+                    && headerAction.visible && headerAction.enabled && !confirmDialog.opened
+                    && (headerAction.hot
+                    && (!headerAction.hasCursor || root.detailsKeyboardFocus || hover.hovered))
+                  text: headerAction.label
+                  delay: 400
+                  padding: Style.spacing.controlPaddingX
+                  palette.toolTipText: Color.foreground
+                  background: Rectangle {
+                    color: Color.tooltip.background
+                    border.color: Color.tooltip.border
+                    border.width: 1
+                  }
+                }
+                HoverHandler { id: hover }
+              }
+            }
           }
 
           Button {
+
+            opacity: enabled ? 1 : 0.4
             visible: root.viewName === "main"
             text: root.busy && !root.fullScanActive ? "Scanning…" : "Network scan"
             iconText: "󰌗"
             tooltipText: "Find driverless network printers"
+            hasCursor: enabled && root.focusSection === "scan" && root.selectedIndex === 0
             enabled: !root.busy
             onClicked: root.scan()
           }
 
           Button {
+
+            opacity: enabled ? 1 : 0.4
             visible: root.viewName === "main"
             text: root.busy && root.fullScanActive ? "Scanning…" : "Full scan"
             iconText: "󰐷"
             tooltipText: "Find all printers · May require authentication"
+            hasCursor: enabled && root.focusSection === "scan" && root.selectedIndex === 1
             enabled: !root.busy
             onClicked: root.scan(true)
           }
@@ -678,25 +934,45 @@ Item {
           Layout.fillHeight: true
         }
 
+
+
+
+      }
+    }
+
+    Rectangle {
+      id: errorBanner
+      anchors.left: parent.left
+      anchors.right: parent.right
+      anchors.bottom: parent.bottom
+      anchors.margins: Style.spacing.panelPadding
+      height: errorContent.implicitHeight + Style.spacing.controlPaddingX * 2
+      visible: root.statusKind === "error" && root.statusMessage !== "" && !confirmDialog.opened
+      color: root.background
+      border.color: root.urgent
+      border.width: 1
+      // Block clicks through the banner into the controls beneath it.
+      MouseArea { anchors.fill: parent }
+      RowLayout {
+        id: errorContent
+        anchors.fill: parent
+        anchors.margins: Style.spacing.controlPaddingX
+        spacing: Style.spacing.controlGap
         Text {
           textFormat: Text.PlainText
-          visible: root.statusMessage !== ""
           text: root.statusMessage
-          color: root.statusKind === "error" ? root.urgent
-            : (root.statusKind === "success" ? Color.flatColor("green", root.accent) : Color.muted)
+          color: root.urgent
           font.family: Style.font.family
           font.pixelSize: Style.font.bodySmall
-          Layout.fillWidth: true
           wrapMode: Text.WordWrap
+          Layout.fillWidth: true
         }
-
-        Text {
-          textFormat: Text.PlainText
-          text: root.keyboardHint()
-          color: Util.alpha(Color.muted, 0.75)
-          font.family: Style.font.family
-          font.pixelSize: Style.font.caption
-          Layout.alignment: Qt.AlignHCenter
+        Button {
+          text: "×"
+          tooltipText: "Dismiss error (Esc)"
+          Accessible.name: "Dismiss error"
+          focusable: true
+          onClicked: root.dismissError()
         }
       }
     }
@@ -759,8 +1035,8 @@ Item {
             statusColor: PrinterState.queueStateKind(modelData) === "attention"
               ? Color.urgent
               : (PrinterState.queueStateKind(modelData) === "paused"
-                ? Color.muted : Color.flatColor("green", root.accent))
-            hasCursor: root.focusSection === "installed" && root.selectedIndex === index
+                ? Qt.darker(Color.foreground, 1.4) : Color.flatColor("green", root.accent))
+            hasCursor: enabled && root.focusSection === "installed" && root.selectedIndex === index
             actionText: "Manage"
             busy: root.busy && root.activeIdentity === modelData.identity
             failed: root.failedIdentity === modelData.identity
@@ -809,7 +1085,7 @@ Item {
               : (modelData.driverless
                 ? (modelData.transportLabel || "Ready to add")
                 : ((modelData.transportLabel || "Printer") + " · Choose a driver"))
-            hasCursor: root.focusSection === "available" && root.selectedIndex === index
+            hasCursor: enabled && root.focusSection === "available" && root.selectedIndex === index
             actionText: modelData.installed
               ? "Installed"
               : (root.failedIdentity === modelData.identity ? "Retry" : "Install")
@@ -835,10 +1111,6 @@ Item {
 
   component DetailsView: Item {
     id: details
-    readonly property var actions: root.managementActions()
-    readonly property var routineActions: actions.filter(function(action) {
-      return action !== "remove"
-    })
 
     function actionLabel(action) {
       if (action === "default")
@@ -868,8 +1140,8 @@ Item {
     }
 
     function targetItem(index) {
-      if (index < routineActions.length) return actionRepeater.itemAt(index)
-      if (index === actions.length - 1) return removeAction
+      if (root.detailsTab === "jobs")
+        return jobsRepeater.itemAt(index - root.managementJobsOffset())
       if (index < root.managementSaveIndex())
         return settingsRepeater.itemAt(index - root.managementOptionOffset())
       if (root.managementDirty && index === root.managementSaveIndex())
@@ -877,11 +1149,15 @@ Item {
       return jobsRepeater.itemAt(index - root.managementJobsOffset())
     }
 
+    function resetScroll() {
+      dashboardScroll.contentItem.contentY = 0
+    }
+
     function ensureCursorVisible() {
       if (root.selectedIndex < root.managementOptionOffset()) return
       var item = targetItem(root.selectedIndex)
       var flickable = dashboardScroll.contentItem
-      if (!item || !flickable) return
+      if (!item || item === saveDefaults || !flickable) return
       var point = item.mapToItem(dashboardContent, 0, 0)
       var top = point.y
       var bottom = top + item.height
@@ -895,63 +1171,50 @@ Item {
       anchors.fill: parent
       spacing: Style.spacing.panelGap
 
-      Text {
-        textFormat: Text.PlainText
-        text: root.selectedQueue ? PrinterState.queueStatus(root.selectedQueue) : ""
-        color: root.selectedQueue
-          && PrinterState.queueStateKind(root.selectedQueue) === "attention"
-            ? Color.urgent
-            : (root.selectedQueue
-                && PrinterState.queueStateKind(root.selectedQueue) !== "paused"
-              ? Color.flatColor("green", root.accent) : Color.muted)
-        font.family: Style.font.family
-        font.pixelSize: Style.font.body
-      }
-
-      RowLayout {
+      ColumnLayout {
         Layout.fillWidth: true
-        spacing: Style.spacing.controlGap
+        spacing: 0
 
-        Repeater {
-          id: actionRepeater
-          model: details.routineActions
-          delegate: Button {
-            required property string modelData
-            required property int index
-            text: details.actionLabel(modelData)
-            iconText: details.actionIcon(modelData)
-            hasCursor: root.selectedIndex === index
-            enabled: !root.busy
-            onHovered: function(on) {
-              if (on) root.selectedIndex = index
-            }
-            onClicked: {
-              root.selectedIndex = index
-              root.activateDetails()
+        RowLayout {
+          Layout.fillWidth: true
+          spacing: Style.spacing.controlGap
+
+          Repeater {
+            model: ["settings", "jobs", "attributes"]
+            delegate: Button {
+              required property string modelData
+              required property int index
+              readonly property bool current: root.detailsTab === modelData
+              text: modelData === "attributes" ? "Attributes" : modelData === "settings" ? "Settings"
+                : "Print jobs" + (root.jobs.length ? " · " + root.jobs.length : "")
+              foreground: current ? root.accent : root.foreground
+              color: "transparent"
+              hasCursor: root.detailsKeyboardFocus
+                && root.selectedIndex === 4 + index
+              borderSpec: hasCursor
+                ? Border.controlSpec("focus", foreground, accent) : Border.none()
+              Accessible.role: Accessible.PageTab
+              Accessible.name: text
+              onClicked: {
+                root.detailsKeyboardFocus = false
+                root.selectDetailsTab(modelData)
+              }
+
+              Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: Style.space(2)
+                color: root.accent
+                visible: parent.current
+              }
             }
           }
+          Item { Layout.fillWidth: true }
         }
 
-        Item { Layout.fillWidth: true }
-
-        Button {
-          id: removeAction
-          text: "Remove"
-          iconText: details.actionIcon("remove")
-          foreground: root.urgent
-          hasCursor: root.selectedIndex === details.actions.length - 1
-          enabled: !root.busy
-          onHovered: function(on) {
-            if (on) root.selectedIndex = details.actions.length - 1
-          }
-          onClicked: {
-            root.selectedIndex = details.actions.length - 1
-            root.activateDetails()
-          }
-        }
+        PanelSeparator { Layout.fillWidth: true }
       }
-
-      PanelSeparator { Layout.fillWidth: true }
 
       ScrollView {
         id: dashboardScroll
@@ -965,116 +1228,190 @@ Item {
           width: dashboardScroll.availableWidth
           spacing: Style.spacing.panelGap
 
-          SectionTitle { text: "Printer settings" }
+          Column {
+            width: parent.width
+            spacing: Style.spacing.panelGap
+            visible: root.detailsTab === "attributes"
 
-          EmptyText {
-            visible: root.managementOptions.length === 0
-            text: root.busy && root.activeCommand === "manage"
-              ? "Loading printer settings…"
-              : (root.optionsLoadFailed ? "Couldn’t load printer settings" : "No printer settings available")
+            Repeater {
+              model: root.attributeRows()
+              delegate: RowLayout {
+                required property var modelData
+                width: dashboardContent.width
+                spacing: Style.spacing.rowGap
+                Text {
+                  textFormat: Text.PlainText
+                  text: modelData.label
+                  Layout.preferredWidth: parent.width * 0.32
+                  Layout.alignment: Qt.AlignTop
+                  color: Qt.darker(Color.foreground, 1.4)
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.body
+                  wrapMode: Text.Wrap
+                }
+                Row {
+                  visible: (modelData.colors || []).length > 0
+                  Layout.alignment: Qt.AlignVCenter
+                  spacing: Style.space(2)
+                  Repeater {
+                    model: modelData.colors || []
+                    delegate: Rectangle {
+                      required property string modelData
+                      width: Style.space(12)
+                      height: width
+                      color: modelData
+                      border.width: 1
+                      border.color: Qt.darker(Color.foreground, 1.4)
+                    }
+                  }
+                }
+                Text {
+                  textFormat: Text.PlainText
+                  text: modelData.value
+                  Layout.fillWidth: true
+                  color: Color.foreground
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.body
+                  wrapMode: Text.WrapAnywhere
+                }
+              }
+            }
+            EmptyText { visible: infoReader.running; text: "Reading printer information…" }
+
           }
 
-          Repeater {
-            id: settingsRepeater
-            model: root.managementOptions
-            delegate: Item {
-              id: settingRow
-              required property var modelData
-              required property int index
-              width: dashboardContent.width
-              height: settingDropdown.implicitHeight
+          Column {
+            width: parent.width
+            spacing: Style.spacing.panelGap
+            visible: root.detailsTab === "settings"
 
-              function toggle() { settingDropdown.toggle() }
+            EmptyText {
+              visible: root.managementOptions.length === 0
+              text: root.busy && root.activeCommand === "manage"
+                ? "Loading printer settings…"
+                : (root.optionsLoadFailed ? "Couldn’t load printer settings" : "No printer settings available")
+            }
 
-              Text {
-                textFormat: Text.PlainText
-                anchors.left: parent.left
-                anchors.right: settingDropdown.left
-                anchors.rightMargin: Style.spacing.rowGap
-                anchors.verticalCenter: parent.verticalCenter
-                text: PrinterState.optionLabel(settingRow.modelData)
-                color: root.foreground
-                font.family: Style.font.family
-                font.pixelSize: Style.font.body
-                elide: Text.ElideRight
-              }
+            Repeater {
+              id: settingsRepeater
+              model: root.managementOptions
+              delegate: Item {
+                id: settingRow
+                required property var modelData
+                required property int index
+                width: dashboardContent.width
+                height: settingDropdown.implicitHeight
 
-              Dropdown {
-                id: settingDropdown
-                width: parent.width * 0.55
-                anchors.right: parent.right
-                anchors.verticalCenter: parent.verticalCenter
-                showLabel: false
-                enabled: !root.busy
-                hasCursor: root.selectedIndex
-                  === root.managementOptionOffset() + settingRow.index
-                value: String(root.optionValues[settingRow.modelData.name] || "")
-                options: PrinterState.optionChoices(settingRow.modelData)
-                onHovered: function(on) {
-                  if (on)
-                    root.selectedIndex = root.managementOptionOffset() + settingRow.index
+                function toggle() { settingDropdown.toggle() }
+
+                Text {
+                  textFormat: Text.PlainText
+                  anchors.left: parent.left
+                  anchors.right: settingDropdown.left
+                  anchors.rightMargin: Style.spacing.rowGap
+                  anchors.verticalCenter: parent.verticalCenter
+                  text: PrinterState.optionLabel(settingRow.modelData)
+                  color: root.foreground
+                  font.family: Style.font.family
+                  font.pixelSize: Style.font.body
+                  elide: Text.ElideRight
                 }
-                onPopupOpenChanged: root.controlPopupOpen = popupOpen
-                onChanged: function(value) {
-                  var next = Object.assign({}, root.optionValues)
-                  next[settingRow.modelData.name] = value
-                  root.optionValues = next
+
+                Dropdown {
+
+                  opacity: enabled ? 1 : 0.4
+                  id: settingDropdown
+                  width: parent.width * 0.55
+                  anchors.right: parent.right
+                  anchors.verticalCenter: parent.verticalCenter
+                  showLabel: false
+                  enabled: !root.busy
+                  hasCursor: enabled && root.selectedIndex
+                    === root.managementOptionOffset() + settingRow.index
+                  value: String(root.optionValues[settingRow.modelData.name] || "")
+                  options: PrinterState.optionChoices(settingRow.modelData)
+                  onHovered: function(on) {
+                    if (on)
+                      root.selectedIndex = root.managementOptionOffset() + settingRow.index
+                  }
+                  onPopupOpenChanged: root.controlPopupOpen = popupOpen
+                  onChanged: function(value) {
+                    var next = Object.assign({}, root.optionValues)
+                    next[settingRow.modelData.name] = value
+                    root.optionValues = next
+                  }
+                }
+              }
+            }
+
+
+          }
+
+          Column {
+            width: parent.width
+            spacing: Style.spacing.panelGap
+            visible: root.detailsTab === "jobs"
+
+            EmptyText {
+              visible: root.jobs.length === 0
+              text: root.busy && (root.activeCommand === "manage" || root.activeCommand === "jobs")
+                ? "Loading print jobs…"
+                : (root.jobsLoadFailed ? "Couldn’t load print jobs" : "No print jobs")
+            }
+
+            Repeater {
+              id: jobsRepeater
+              model: root.jobs
+              delegate: PrinterRow {
+                required property var modelData
+                required property int index
+                width: dashboardContent.width
+                title: modelData.name || ("Job " + modelData.id)
+                subtitle: (modelData.user || "")
+                  + (modelData.stateLabel ? " · " + modelData.stateLabel : "")
+                actionText: "Cancel"
+                actionColor: root.urgent
+                hasCursor: enabled && root.selectedIndex === root.managementJobsOffset() + index
+                busy: root.busy && root.activeCommand === "cancel-job"
+                onPointerMoved: function(item, mouse) {
+                  if (pointerGate.moved(item, mouse))
+                    root.selectedIndex = root.managementJobsOffset() + index
+                }
+                onActivated: {
+                  root.selectedIndex = root.managementJobsOffset() + index
+                  root.activateDetails()
                 }
               }
             }
           }
+        }
+      }
 
+      ColumnLayout {
+        Layout.fillWidth: true
+        visible: root.detailsTab === "settings"
+        spacing: Style.spacing.controlGap
+
+        PanelSeparator { Layout.fillWidth: true }
+
+        RowLayout {
+          Layout.fillWidth: true
+          Item { Layout.fillWidth: true }
           Button {
+
+            opacity: enabled ? 1 : 0.4
             id: saveDefaults
             text: root.busy && root.activeCommand === "set-options"
               ? "Saving…" : "Save defaults"
             iconText: "󰆓"
-            hasCursor: root.managementDirty
+            hasCursor: enabled && root.managementDirty
               && root.selectedIndex === root.managementSaveIndex()
             enabled: root.managementDirty && !root.busy
-            opacity: root.managementDirty ? 1 : 0.5
             onHovered: function(on) {
               if (on) root.selectedIndex = root.managementSaveIndex()
             }
             onClicked: root.saveManagementOptions()
           }
-
-          PanelSeparator { width: parent.width }
-          SectionTitle { text: "Print jobs" }
-
-          EmptyText {
-            visible: root.jobs.length === 0
-            text: root.busy && (root.activeCommand === "manage" || root.activeCommand === "jobs")
-              ? "Loading print jobs…"
-              : (root.jobsLoadFailed ? "Couldn’t load print jobs" : "No print jobs")
-          }
-
-          Repeater {
-            id: jobsRepeater
-            model: root.jobs
-            delegate: PrinterRow {
-              required property var modelData
-              required property int index
-              width: dashboardContent.width
-              title: modelData.name || ("Job " + modelData.id)
-              subtitle: (modelData.user || "")
-                + (modelData.stateLabel ? " · " + modelData.stateLabel : "")
-              actionText: "Cancel"
-              actionColor: root.urgent
-              hasCursor: root.selectedIndex === root.managementJobsOffset() + index
-              busy: root.busy && root.activeCommand === "cancel-job"
-              onPointerMoved: function(item, mouse) {
-                if (pointerGate.moved(item, mouse))
-                  root.selectedIndex = root.managementJobsOffset() + index
-              }
-              onActivated: {
-                root.selectedIndex = root.managementJobsOffset() + index
-                root.activateDetails()
-              }
-            }
-          }
-
-          Item { width: 1; height: Style.spacing.panelGap }
         }
       }
     }
@@ -1109,10 +1446,12 @@ Item {
       }
 
       SearchableDropdown {
+
+        opacity: enabled ? 1 : 0.4
         id: modelPicker
         Layout.fillWidth: true
         label: "Driver"
-        hasCursor: root.selectedIndex === 0
+        hasCursor: enabled && root.selectedIndex === 0
         value: root.selectedModelId
         options: root.models.map(function(model) {
           return {
@@ -1126,10 +1465,12 @@ Item {
       }
 
       Button {
+
+        opacity: enabled ? 1 : 0.4
         text: root.busy ? "Adding…" : "Add printer"
         iconText: "󰐕"
         bordered: true
-        hasCursor: root.selectedIndex === 1
+        hasCursor: enabled && root.selectedIndex === 1
         enabled: !root.busy && root.selectedDevice && root.selectedModelId !== ""
         onClicked: root.runBackend("add",
           ["--name", root.selectedDevice.name,
@@ -1147,7 +1488,7 @@ Item {
     id: row
     property string title: ""
     property string subtitle: ""
-    property color statusColor: Color.muted
+    property color statusColor: Qt.darker(Color.foreground, 1.4)
     property string actionText: ""
     property color actionColor: root.foreground
     property bool actionItalic: false
@@ -1158,6 +1499,8 @@ Item {
     signal pointerMoved(var item, var mouse)
 
     implicitHeight: Style.space(58)
+    enabled: actionable && !busy
+    opacity: enabled ? 1 : 0.4
     bordered: true
 
     MouseArea {
@@ -1190,7 +1533,7 @@ Item {
         }
         Text {
           textFormat: Text.PlainText
-          text: row.busy ? "Working…" : (row.failed ? root.statusMessage : row.subtitle)
+          text: row.busy ? "Working…" : row.subtitle
           color: row.failed ? root.urgent : row.statusColor
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
@@ -1202,7 +1545,7 @@ Item {
       Text {
         textFormat: Text.PlainText
         text: row.actionText
-        color: row.actionable ? row.actionColor : Color.muted
+        color: row.actionable ? row.actionColor : Qt.darker(Color.foreground, 1.4)
         font.family: Style.font.family
         font.pixelSize: Style.font.body
         font.italic: row.actionItalic
@@ -1214,7 +1557,7 @@ Item {
   component SectionTitle: Text {
     textFormat: Text.PlainText
     Layout.fillHeight: false
-    color: Color.muted
+    color: Qt.darker(Color.foreground, 1.4)
     font.family: Style.font.family
     font.pixelSize: Style.font.caption
     font.capitalization: Font.AllUppercase
@@ -1224,7 +1567,7 @@ Item {
   component EmptyText: Text {
     textFormat: Text.PlainText
     Layout.fillHeight: false
-    color: Color.muted
+    color: Qt.darker(Color.foreground, 1.4)
     font.family: Style.font.family
     font.pixelSize: Style.font.body
     Layout.fillWidth: true

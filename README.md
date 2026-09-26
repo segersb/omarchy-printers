@@ -3,7 +3,8 @@
 A printer settings panel built for Omarchy Shell, intended to replace the
 traditional `system-config-printer` screens and bring printer management into
 Omarchy. Manage printers, defaults, and print jobs in one keyboard-first panel,
-with a compact bar popup for status and quick settings.
+with a compact bar popup for status and quick settings. A shared print dialog
+also offers print zoom and positioning from Chrome or directly from PNG/JPEG images.
 
 The optional [system dialog override](#replace-the-system-printer-settings-dialog)
 also makes Chrome's printer-management button open this panel. The longer-term
@@ -32,6 +33,7 @@ Current Omarchy installations already include the required packages:
 - `cups-pk-helper`
 - `python-pycups`
 - `python-dbus`
+- `python-gobject` (GLib event loop for CUPS notifications)
 
 CUPS must be running. Privileged actions use the system CUPS PolicyKit helper
 and Omarchy's existing authentication agent.
@@ -60,9 +62,24 @@ omarchy plugin enable segersb.omarchy-printers
 ## Open
 
 Enabling the plugin adds its printer icon to the right side of the bar. Click
-it for cached CUPS queue state and configurable defaults. Opening the popup
-does not scan for printers. Its queue state updates when the widget starts and
-after printer changes made through the full settings panel.
+it for CUPS queue state and configurable defaults. The printer icon uses the
+current theme’s accent color while CUPS reports a queue is processing; problems
+use the urgent color.
+
+A shared CUPS notification listener updates the bar and open panels when
+printers or jobs change. There is no status polling or automatic network scan.
+The listener renews its notification subscription before its lease expires.
+Opening a panel also refreshes status once. Background updates preserve unsaved
+defaults. Job lists update live while their printer dashboard is open.
+
+If notifications are unavailable, the tooltip says **Live status unavailable**
+and the printing highlight is cleared. Opening a panel retries the listener
+and refreshes status; it never silently enables polling. Replacement bars that
+cannot access plugin services use opening-time refreshes.
+
+“Printing” reflects CUPS processing, which can include preparing or transferring
+a job; it does not guarantee that paper is moving. Page percentages and desktop
+notifications are not included.
 
 The full settings panel can also be opened directly:
 
@@ -77,8 +94,9 @@ already configured in CUPS remain visible there as **Installed**; new printers
 can be installed by selecting their entire row.
 
 Selecting an installed printer opens one management dashboard. Queue actions
-stay at the top, with **Printer settings** and **Print jobs** visible together
-below. Changed settings are applied only through **Save defaults**; the action
+stay at the top, above separate **Settings**, **Print jobs**, and **Attributes**
+tabs. Attributes show available printer details and supply levels; unsupported
+information is omitted. Changed settings are applied only through **Save defaults**; the action
 is unavailable while the loaded defaults are unchanged.
 
 To add it to the Omarchy menu, merge
@@ -98,52 +116,33 @@ launch `system-config-printer` through `PATH` open the Omarchy panel instead.
 This has been tested with Chrome on Omarchy. It replaces the printer-management
 screen, not an application's print preview or document print dialog.
 
-Create this executable at `~/.local/bin/system-config-printer`:
+Open the bar popup → **System integration** → **Printer settings** and turn on its toggle.
+This creates a user launcher and an owned UWSM login configuration that puts
+`~/.local/bin` first in the desktop session PATH. **Log out and back in** to
+activate the change. This PATH ordering also gives other executables in that
+directory precedence over matching system commands.
 
-```sh
-#!/bin/sh
-exec omarchy-shell shell summon segersb.omarchy-printers '{}'
-```
+The packaged dialog remains available as `/usr/bin/system-config-printer`;
+applications using that absolute path bypass the override. Turning the toggle off removes
+only the plugin-owned launcher and login configuration. Existing PATH settings,
+including the earlier manually created `90-local-bin-first`, remain unchanged.
+The exact launcher from earlier versions is recognized and can be restored here.
 
-Make it executable:
-
-```bash
-chmod +x ~/.local/bin/system-config-printer
-```
-
-The directory must precede `/usr/bin` in the desktop session's `PATH`; a shell
-alias does not affect Chrome. Create `~/.config/uwsm/env.d/90-local-bin-first`
-(create the parent directory if needed) with:
-
-```sh
-case "$PATH" in
-  "$HOME/.local/bin"|"$HOME/.local/bin:"*) ;;
-  *) export PATH="$HOME/.local/bin:$PATH" ;;
-esac
-```
-
-**Log out and back in**, then open Chrome and try its printer-management
-button. Existing processes keep their old environment. In a new terminal,
-`command -v system-config-printer` should show the launcher in your home
-directory. This PATH change gives all executables in `~/.local/bin` precedence
-over matching system commands.
-
-The packaged dialog remains available as `/usr/bin/system-config-printer`.
-Applications that launch that absolute path bypass the override.
-
-To undo the override, remove the launcher created above:
-
-```bash
-rm ~/.local/bin/system-config-printer
-```
-
-You can also remove `~/.config/uwsm/env.d/90-local-bin-first` if you added it
-solely for this override, then log out and back in to restore PATH ordering.
+The integration panel also independently enables the **System print dialog**
+and **Print from Files**. Each has its own toggle; **Enable all** enables the
+remaining integrations. Files printing does not require changing the system Print provider.
+Existing integration files are never overwritten without an ownership record;
+externally edited files are retained and reported for manual resolution. If a
+setup change is interrupted, retry it or choose **Restore defaults**; the
+ownership record retains both the previous and intended file contents.
 
 ## Update and remove
 
-If you enabled the system dialog override, remove it before disabling or
-removing the plugin so applications can open the packaged dialog again.
+Before disabling, removing, or moving the plugin, open **System integration**
+and choose **Restore defaults**. Omarchy’s removal command does not run plugin cleanup.
+Close print dialogs first; restore restarts the desktop portal and attempts to
+restart Files. Log out and back in to apply changes to the printer settings launcher. The same recovery action is available as
+`python3 backend/print_setup.py restore all` from the plugin directory.
 
 ```bash
 omarchy plugin update segersb.omarchy-printers
@@ -168,12 +167,13 @@ Full settings:
 - Tab: move through form controls
 
 On the management dashboard, navigation follows its visual order: queue
-actions, setting dropdowns, **Save defaults** when settings have changed, then
-job cancellation. Moving above the first item focuses **Back** so it can be
+actions, tabs, then the active tab’s controls. **Save defaults** becomes
+available when settings change; job cancellation is in **Print jobs**. The
+default-printer star is skipped once that printer is already the default. Moving above the first item focuses **Back** so it can be
 activated from the keyboard. Dropdowns retain the navigation keys while open.
 
 The compact popup intentionally omits administrative actions such as adding,
-removing, pausing, and printing a test page. Use **Open printer settings** for
+removing, pausing, and printing a test page. Use **Printer settings** for
 the full panel.
 
 ## Development
@@ -212,3 +212,50 @@ journalctl --user --since "1 minute ago" --no-pager |
 Installing the plugin does not automatically change system printer launchers.
 The optional user-level override above redirects `system-config-printer`
 launches without modifying the packaged executable, desktop entries, or Chrome.
+
+## Print dialog and image printing
+
+The shared print dialog has a fixed paper preview, **10–400% print zoom**, and
+**drag-to-position**. **Ctrl + scroll** over the sheet zooms in 5% steps around
+the pointer. Changes affect the printed output; anything outside the
+outlined printable area is clipped. Each page keeps its own adjustment.
+**Reset page** restores 100% and centers it; **Apply to all pages** copies the
+current zoom and position to every page. The preview uses the same placement
+and hardware margins as the output PDF, with no content or whitespace detection.
+
+Open the bar popup → **System integration** and enable **System print dialog**.
+Enable **Print from Files** separately for the PNG/JPEG context menu. Close open print dialogs before enabling or restoring;
+setup restarts the desktop portal. After enabling or disabling the Files action, the plugin attempts to restart
+Files and reopen its folder locations. If Files cannot quit, it is left running
+without an error; the change takes effect on its next full restart or login. Other portal preferences and the default image viewer are preserved.
+
+- **From Chrome:** choose **Print using system dialog**. The plugin automatically
+  uses Chrome's current paper settings (or printer defaults when unavailable) to
+  obtain the document and open its preview. Change printer, paper, orientation,
+  copies, color, duplex or sizing, then choose **Print**. Paper changes resize the
+  output sheet; they do not reflow webpage text or change Chrome's pagination.
+  Once the document has arrived, the plugin owns the preview. Chrome's request
+  finishes at that handoff; printing still requires **Print** in this dialog.
+- **From Files:** right-click one local PNG or JPEG → **Print**. The original
+  image opens directly in the preview. Paper and orientation remain editable.
+  Transparent pixels print on white; JPEG orientation metadata is respected.
+  100% uses embedded DPI when valid, otherwise 96 DPI.
+- **From a terminal:** `python3 backend/print_portal.py image /absolute/path/image.png`
+  from the plugin directory, after enabling integration.
+
+Turn off individual integrations using their toggles, or choose **Restore
+defaults** to disable them all. Do this **before removing or moving the plugin**. Integration uses absolute paths to the installed plugin;
+there are no package installs or copied backend binaries. To repair registration
+after moving a development checkout, restore from the new checkout, then enable.
+
+Printing uses Omarchy's existing `poppler-glib` (through Evince), `python-cairo`
+(through system-config-printer), GTK/GdkPixbuf, and the existing Python CUPS/D-Bus
+bindings. It does not need Pillow, pypdf, or pip. Setup checks these components
+before making changes. A minimal/custom installation missing them shows a
+missing-component message rather than installing anything.
+
+The system route supports applications using the Print portal, not applications
+that create GTK dialogs directly. V1 accepts PDF portal documents and local
+PNG/JPEG images, with up to 500 PDF pages, 128 MiB input, and 40-megapixel images.
+It does not provide print-to-file or content-aware cropping. For Chrome documents,
+100% refers to the received PDF, including any margins and scaling Chrome applied. Requests expire after 15 minutes, and cancellation never submits a job.
